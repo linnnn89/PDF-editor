@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, access, readdir } from 'node:fs/promises';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,9 @@ function structure(file) {
 }
 async function missing(file) { await assert.rejects(access(file), { code: 'ENOENT' }); }
 function noProcess(pid) { assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' }); }
+function cli(args) {
+  return spawnSync(process.execPath, [path.join(root, 'src/cli.mjs'), ...args], { encoding: 'utf8', windowsHide: true });
+}
 
 test('inspect and crop split content, repeated Forms, images, Rotate and UserUnit without changing source streams', async () => {
   const file = path.join(work, '中文 source.pdf'); await fixture(file);
@@ -117,4 +120,85 @@ test('reject stale/unsupported/occupied writes, replay one request, clean cancel
     await new Promise(resolve => setTimeout(resolve, 25));
   }
   assert.fail('Native worker survived parent exit');
+});
+
+test('CLI writes full exclusive reports and emits bounded apply summaries', async () => {
+  const file = path.join(work, 'cli-source.pdf'); await fixture(file);
+  const sourceSha256 = await sha256(file);
+  const makePlan = output => ({
+    sourceSha256, output,
+    operations: [{ op: 'page.crop', page: 0, rectPt: { x: 10, y: 10, width: 180, height: 90 } }],
+  });
+  const output = path.join(work, 'cli-output.pdf');
+  const planFile = path.join(work, 'cli-plan.json');
+  const report = path.join(work, 'cli-receipt.json');
+  await writeFile(planFile, JSON.stringify(await makePlan(output)));
+  const summarized = cli(['apply', file, planFile, '--summary', '--report', report]);
+  assert.equal(summarized.status, 0, summarized.stderr);
+  const summary = JSON.parse(summarized.stdout);
+  for (const key of ['version', 'output', 'outputSha256', 'sourceSha256', 'requestId', 'replayed', 'totalMs', 'modified', 'validation', 'report']) {
+    assert.equal(Object.hasOwn(summary, key), true, `summary is missing ${key}`);
+  }
+  assert.equal(summary.output, output); assert.equal(summary.modified, 1);
+  assert.equal(summary.sourceSha256, sourceSha256); assert.equal(summary.replayed, false);
+  assert.equal(summary.report, path.resolve(report)); assert.ok(summary.totalMs >= 0);
+  assert.deepEqual(summary.validation, { reopened: true, rawStreamsPreserved: 4, pageBoxesVerified: true });
+  assert.equal(summarized.stdout.includes('before'), false);
+  const receipt = JSON.parse(await readFile(report, 'utf8'));
+  assert.equal(receipt.outputSha256, summary.outputSha256); assert.equal(receipt.changes.length, 1);
+
+  const defaultOutput = path.join(work, 'cli-default-output.pdf');
+  const defaultPlan = path.join(work, 'cli-default-plan.json');
+  await writeFile(defaultPlan, JSON.stringify(await makePlan(defaultOutput)));
+  const compatible = cli(['apply', file, defaultPlan]);
+  assert.equal(compatible.status, 0, compatible.stderr);
+  assert.equal(JSON.parse(compatible.stdout).changes.length, 1);
+
+  const composedOutput = path.join(work, 'cli-composed.pdf');
+  const composePlan = path.join(work, 'cli-compose-plan.json');
+  await writeFile(composePlan, JSON.stringify({ widthPt: 220, heightPt: 120, output: composedOutput, panels: [
+    { file, page: 0, targetRectPt: { x: 0, y: 0, width: 220, height: 120 } },
+  ] }));
+  const composed = cli(['compose', composePlan, '--summary']);
+  assert.equal(composed.status, 0, composed.stderr);
+  const composeSummary = JSON.parse(composed.stdout);
+  assert.equal(composeSummary.panels, 1); assert.equal(composeSummary.validation.panelForms, 1);
+  assert.equal(composeSummary.validation.rasterized, false); assert.equal('placements' in composeSummary, false);
+
+  const occupiedOutput = path.join(work, 'cli-occupied-report-output.pdf');
+  const occupiedPlan = path.join(work, 'cli-occupied-report-plan.json');
+  await writeFile(occupiedPlan, JSON.stringify(await makePlan(occupiedOutput)));
+  const occupied = cli(['apply', file, occupiedPlan, '--report', report]);
+  assert.equal(occupied.status, 1); assert.equal(JSON.parse(occupied.stderr).error.code, 'REPORT_EXISTS');
+  await missing(occupiedOutput);
+
+  const conflictOutput = path.join(work, 'cli-conflict-output.pdf');
+  const conflictPlan = path.join(work, 'cli-conflict-plan.json');
+  await writeFile(conflictPlan, JSON.stringify(await makePlan(conflictOutput)));
+  const conflict = cli(['apply', file, conflictPlan, '--report', conflictOutput]);
+  assert.equal(conflict.status, 1); assert.equal(JSON.parse(conflict.stderr).error.code, 'REPORT_PATH_CONFLICT');
+  await missing(conflictOutput);
+
+  const inputConflictOutput = path.join(work, 'cli-input-conflict-output.pdf');
+  const inputConflictPlan = path.join(work, 'cli-input-conflict-plan.json');
+  await writeFile(inputConflictPlan, JSON.stringify(await makePlan(inputConflictOutput)));
+  const inputConflict = cli(['apply', file, inputConflictPlan, '--report', file]);
+  assert.equal(inputConflict.status, 1); assert.equal(JSON.parse(inputConflict.stderr).error.code, 'REPORT_PATH_CONFLICT');
+  await missing(inputConflictOutput);
+
+  const invalidOutput = path.join(work, 'cli-invalid-output.pdf');
+  const invalidPlan = path.join(work, 'cli-invalid-plan.json');
+  const invalidReport = path.join(work, 'cli-invalid-report.json');
+  await writeFile(invalidPlan, JSON.stringify({ ...(await makePlan(invalidOutput)),
+    operations: [{ op: 'page.crop', page: 0, rectPt: { x: -1, y: 0, width: 10, height: 10 } }],
+  }));
+  const invalid = cli(['apply', file, invalidPlan, '--summary', '--report', invalidReport]);
+  assert.equal(invalid.status, 1); assert.equal(JSON.parse(invalid.stderr).error.code, 'OUTSIDE_PAGE');
+  await missing(invalidOutput); await missing(invalidReport);
+
+  const unsupported = cli(['inspect', file, '--summary']);
+  assert.equal(unsupported.status, 1); assert.equal(JSON.parse(unsupported.stderr).error.code, 'INVALID_ARGUMENT');
+
+  const emptyReport = cli(['apply', file, conflictPlan, '--report', '']);
+  assert.equal(emptyReport.status, 1); assert.equal(JSON.parse(emptyReport.stderr).error.code, 'INVALID_ARGUMENT');
 });

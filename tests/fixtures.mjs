@@ -3,12 +3,12 @@ import { writeFile } from 'node:fs/promises';
 
 // A tiny known PDF, not a renderer round-trip: split streams, a repeated Form,
 // a bitmap, visible text, inherited boxes, rotations and UserUnit scaling.
-export async function fixture(file, { large = false, content = null, font = null } = {}) {
+export async function fixture(file, { large = false, content = null, font = null, compress = true } = {}) {
   const objects = [];
   const add = body => { objects.push(Buffer.isBuffer(body) ? body : Buffer.from(body, 'ascii')); return objects.length; };
   const stream = (data, dictionary = '') => {
-    const bytes = deflateSync(Buffer.from(data));
-    return Buffer.concat([Buffer.from(`<< /Length ${bytes.length} /Filter /FlateDecode ${dictionary} >>\nstream\n`), bytes, Buffer.from('\nendstream')]);
+    const bytes = compress ? deflateSync(Buffer.from(data)) : Buffer.from(data);
+    return Buffer.concat([Buffer.from(`<< /Length ${bytes.length} ${compress ? '/Filter /FlateDecode' : ''} ${dictionary} >>\nstream\n`), bytes, Buffer.from('\nendstream')]);
   };
   add('<< /Type /Catalog /Pages 2 0 R >>');
   add(`<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R] /Count 4 /MediaBox [0 0 ${large ? '1200 1200' : '240 160'}] /Resources << /Font << /F1 7 0 R >> /XObject << /Fm 10 0 R >> >> >>`);

@@ -184,8 +184,6 @@ struct Document {
             auto p = std::make_unique<LoadedPage>();
             p->page = FPDF_LoadPage(pdf, index);
             require(p->page != nullptr, "PAGE_LOAD_FAILED", "PDFium could not load the page");
-            p->text = FPDFText_LoadPage(p->page);
-            require(p->text != nullptr, "TEXT_LOAD_FAILED", "PDFium could not load page text");
             cache[index] = std::move(p);
         }
         return *cache.at(index);
@@ -197,6 +195,12 @@ struct Document {
         return result;
     }
 };
+void ensureText(LoadedPage& page) {
+    if (!page.text) {
+        page.text = FPDFText_LoadPage(page.page);
+        require(page.text != nullptr, "TEXT_LOAD_FAILED", "PDFium could not load page text");
+    }
+}
 using Matrix = std::array<double, 6>;
 Matrix multiply(Matrix a, Matrix b) {
     return {a[0]*b[0]+a[2]*b[1], a[1]*b[0]+a[3]*b[1], a[0]*b[2]+a[2]*b[3], a[1]*b[2]+a[3]*b[3], a[0]*b[4]+a[2]*b[5]+a[4], a[1]*b[4]+a[3]*b[5]+a[5]};
@@ -270,11 +274,41 @@ void indexObjects(LoadedPage& page, FPDF_PAGEOBJECT form, Matrix parent, const G
 J& objects(Document& doc, int index) {
     auto& page = doc.load(index);
     if (page.objects.is_null()) {
+        ensureText(page);
         J list = J::array();
         indexObjects(page, nullptr, {1,0,0,1,0,0}, geometry(doc.pages.at(index)), "p" + std::to_string(index), list, 0);
         page.objects = std::move(list);
     }
     return page.objects;
+}
+void countObjects(LoadedPage& page, FPDF_PAGEOBJECT form, J& counts, size_t& total, int depth) {
+    require(depth <= 32, "RESOURCE_LIMIT", "Form nesting exceeds 32 levels");
+    int count = form ? FPDFFormObj_CountObjects(form) : FPDFPage_CountObjects(page.page);
+    require(count >= 0, "OBJECT_READ_FAILED", "Cannot enumerate objects");
+    for (int i = 0; i < count; ++i) {
+        require(total < 100000, "RESOURCE_LIMIT", "Page exceeds 100000 objects");
+        auto obj = form ? FPDFFormObj_GetObject(form, i) : FPDFPage_GetObject(page.page, i);
+        require(obj != nullptr, "OBJECT_READ_FAILED", "Null page object");
+        int type = FPDFPageObj_GetType(obj);
+        const char* typeName = type == FPDF_PAGEOBJ_TEXT ? "text" : type == FPDF_PAGEOBJ_PATH ? "path" : type == FPDF_PAGEOBJ_IMAGE ? "image" : type == FPDF_PAGEOBJ_FORM ? "form" : "other";
+        counts[typeName] = counts.value(typeName, 0) + 1;
+        ++total;
+        if (type == FPDF_PAGEOBJ_FORM) countObjects(page, obj, counts, total, depth + 1);
+    }
+}
+J stats(Document& doc, const J& request) {
+    require(request.is_object(), "INVALID_ARGUMENT", "stats parameters must be an object");
+    for (const auto& item : request.items())
+        require(item.key() == "page", "INVALID_ARGUMENT", "Unknown stats parameter: " + item.key());
+    int pageNo = request.contains("page") ? integer(request["page"], "page", 100000) : 0;
+    auto& page = doc.load(pageNo);
+    auto g = geometry(doc.pages.at(pageNo));
+    J counts = J::object();
+    size_t total = 0;
+    countObjects(page, nullptr, counts, total, 0);
+    return {{"page", pageNo}, {"pageCount", doc.pages.size()}, {"widthPt", g.width}, {"heightPt", g.height},
+            {"rotation", g.rotation}, {"userUnit", g.unit}, {"coordinateSystem", "rotated-visible-page-top-left-pt"},
+            {"pdfVersion", doc.qpdf.getPDFVersion()}, {"counts", counts}, {"totalObjects", total}, {"warnings", doc.warnings()}};
 }
 void ensureMapping(Document& doc, int index);
 J inspect(Document& doc, const J& request) {
@@ -355,11 +389,16 @@ void writable(Document& doc) {
             throw Failure("UNSUPPORTED_DOCUMENT", "This alpha does not modify signed PDFs");
     }
 }
+void preserveStreamEncoding(QPDF& doc) {
+    // Freeze imported/source streams before adding new ones. Even an originally
+    // uncompressed stream must retain its encoded bytes for preservation checks.
+    for (auto object : doc.getAllObjects()) if (object.isStream()) object.setFilterOnWrite(false);
+}
 void save(QPDF& doc, const std::string& output, bool preserveAll, PDFVersion minimumVersion = {}) {
     require(!fs::exists(fs::path(wide(output))), "OUTPUT_EXISTS", "Candidate path already exists");
     QPDFWriter writer(doc, output.c_str());
     if (minimumVersion.getMajor()) writer.setMinimumPDFVersion(minimumVersion);
-    writer.setCompressStreams(false); writer.setDecodeLevel(qpdf_dl_none);
+    writer.setCompressStreams(true); writer.setDecodeLevel(qpdf_dl_none);
     writer.setPreserveUnreferencedObjects(preserveAll); writer.write();
 }
 J crop(Document& original, const J& request) {
@@ -368,6 +407,7 @@ J crop(Document& original, const J& request) {
     require(operations.is_array() && !operations.empty() && operations.size() <= 100, "INVALID_ARGUMENT", "Provide 1 to 100 crop operations");
     QPDF candidate; candidate.setSuppressWarnings(true);
     candidate.processMemoryFile("snapshot.pdf", original.bytes.data(), original.bytes.size());
+    preserveStreamEncoding(candidate);
     auto pages = QPDFPageDocumentHelper::get(candidate).getAllPages();
     std::set<int> touched;
     J changes = J::array();
@@ -397,6 +437,39 @@ J crop(Document& original, const J& request) {
     return {{"changes", changes}, {"validation", {{"reopened", true}, {"rawStreamsPreserved", before.size()}, {"pageBoxesVerified", true}}}};
 }
 #include "editing.h"
+J shareFontPrograms(QPDF& doc) {
+    std::map<std::string, OH> canonical;
+    std::map<QPDFObjGen, OH> replacements;
+    size_t programs = 0, encodedBytes = 0;
+    for (auto object : doc.getAllObjects()) {
+        if (!object.isDictionary() || !object.getKey("/Type").isNameAndEquals("/FontDescriptor")) continue;
+        auto program = object.getKey("/FontFile2");
+        if (!program.isStream()) continue;
+        auto id = program.getObjGen();
+        if (replacements.contains(id)) {
+            object.replaceKey("/FontFile2", replacements.at(id));
+            continue;
+        }
+        auto dictionary = program.getDict().shallowCopy(); dictionary.removeKey("/Length");
+        auto bytes = program.getRawStreamData();
+        auto key = dictionary.unparse() + ":" + digest(bytes->getBuffer(), bytes->getSize());
+        auto chosen = program;
+        if (auto found = canonical.find(key); found != canonical.end()) {
+            auto other = found->second.getRawStreamData();
+            // Hashing finds candidates, but only exact encoded bytes and the
+            // entire stream dictionary (except computed Length) permit reuse.
+            if (bytes->getSize() == other->getSize() &&
+                (!bytes->getSize() || std::equal(bytes->getBuffer(), bytes->getBuffer() + bytes->getSize(), other->getBuffer()))) {
+                chosen = found->second;
+                ++programs; encodedBytes += bytes->getSize();
+            }
+        } else canonical.emplace(key, program);
+        replacements.emplace(id, chosen);
+        // Font dictionaries, descriptors, widths and character maps stay separate.
+        object.replaceKey("/FontFile2", chosen);
+    }
+    return {{"fontProgramsShared", programs}, {"encodedFontBytesShared", encodedBytes}};
+}
 J compose(const J& request) {
     double width = number(request.at("widthPt"), "widthPt"), height = number(request.at("heightPt"), "heightPt");
     require(width > 0 && height > 0 && width <= 14400 && height <= 14400, "INVALID_ARGUMENT", "Composition dimensions must be in (0, 14400] pt");
@@ -411,6 +484,7 @@ J compose(const J& request) {
     QPDFPageObjectHelper ph(page);
     std::map<std::string, std::unique_ptr<Document>> sources;
     J placements = J::array(); std::string content;
+    std::vector<OH> panelForms;
     int count = 0;
     for (const auto& panel : panels) {
         std::string file = panel.at("file"), expected = panel.at("sha256");
@@ -432,6 +506,7 @@ J compose(const J& request) {
         copy.getObjectHandle().replaceKey("/TrimBox", sourceBox);
         auto foreign = copy.getFormXObjectForPage(true);
         auto form = result.copyForeignObject(foreign);
+        panelForms.push_back(form);
         std::string name = "/Panel" + std::to_string(++count);
         xobjects.replaceKey(name, form);
         OH::Rectangle destination(target.x, height-target.y-target.h, target.x+target.w, height-target.y);
@@ -441,6 +516,11 @@ J compose(const J& request) {
         placements.push_back({{"panel", count-1}, {"page", index}, {"sourceRectPt", region.json()}, {"placedRectPt", placed.json()},
                               {"scale", scale}, {"excludedAnnotations", annotationCount}});
     }
+    // Imported image/font/nested-Form resources retain their original encoding.
+    // Only the newly generated panel wrappers and placement stream may compress.
+    preserveStreamEncoding(result);
+    auto optimization = shareFontPrograms(result);
+    for (auto form : panelForms) form.setFilterOnWrite(true);
     page.replaceKey("/Contents", result.newStream(content));
     QPDFPageDocumentHelper::get(result).addPage(ph, false);
     auto output = request.at("output").get<std::string>(); save(result, output, false, minimumVersion);
@@ -449,7 +529,8 @@ J compose(const J& request) {
     require(imported.getKeys().size() == panels.size(), "VERIFY_FAILED", "Panel Form count differs");
     for (auto& name : imported.getKeys()) require(imported.getKey(name).getDict().getKey("/Subtype").isNameAndEquals("/Form"), "VERIFY_FAILED", "Panel is not a vector Form");
     require(!check.qpdf.anyWarnings(), "VERIFY_FAILED", "Composition has parse warnings");
-    return {{"placements", placements}, {"validation", {{"reopened", true}, {"panelForms", panels.size()}, {"rasterized", false}}}};
+    return {{"placements", placements}, {"optimization", optimization},
+            {"validation", {{"reopened", true}, {"panelForms", panels.size()}, {"rasterized", false}}}};
 }
 struct ParentWatch {
     HANDLE parent{}, stop{}; std::thread watcher;
@@ -481,7 +562,7 @@ int main(int argc, char** argv) {
                 const auto request = J::parse(line); id = request.at("id");
                 auto method = request.at("method").get<std::string>(); const auto& params = request.at("params");
                 J value;
-                if (method == "hello") value = {{"version", APP_VERSION}, {"protocol", 1}, {"pid", GetCurrentProcessId()}, {"qpdf", QPDF::QPDFVersion()}, {"pdfium", "155.0.8044.0"}, {"capabilities", {"inspect", "query", "render", "page.crop", "compose", "text.replace", "text.style", "path.style"}}};
+                if (method == "hello") value = {{"version", APP_VERSION}, {"protocol", 1}, {"pid", GetCurrentProcessId()}, {"qpdf", QPDF::QPDFVersion()}, {"pdfium", "155.0.8044.0"}, {"capabilities", {"inspect", "query", "stats", "render", "page.crop", "compose", "text.replace", "text.style", "path.style"}}};
                 else if (method == "open") {
                     auto next = std::make_unique<Document>(params.at("file"), params.at("sha256"));
                     value = {{"sha256", next->sha}, {"pageCount", next->pages.size()}, {"warnings", next->warnings()}};
@@ -491,6 +572,7 @@ int main(int argc, char** argv) {
                 else {
                     require(doc != nullptr, "NO_DOCUMENT", "Open a document first");
                     if (method == "inspect" || method == "query") value = inspect(*doc, params);
+                    else if (method == "stats") value = stats(*doc, params);
                     else if (method == "render") value = render(*doc, params);
                     else if (method == "apply") value = applyEdits(*doc, params);
                     else throw Failure("UNKNOWN_METHOD", "Unknown engine method");

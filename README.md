@@ -10,7 +10,7 @@
 
 Agent PDF Editor is a local CLI and JavaScript API for researchers and agent developers who need targeted changes to existing PDF figures. It edits supported PDF objects directly, without an SVG round trip or regenerating the chart from data.
 
-> **Current version: 0.2.2-alpha.1.** Windows x64 only. This is a source-build toolkit, with no desktop GUI or prebuilt installer. Editing support depends on the structure and fonts of the input PDF.
+> **Current version: 0.2.5-alpha.1.** Windows x64 only. This is a source-build toolkit, with no desktop GUI or prebuilt installer. Editing support depends on the structure and fonts of the input PDF.
 
 [Quick start](#quick-start) · [JavaScript example](#javascript-example) · [Capabilities](#capabilities) · [API reference](docs/API.md)
 
@@ -54,6 +54,7 @@ The demo prints the paths to its before/after PDFs, PNG previews, and output dir
 Place your file at `test pdf/figure.pdf`, then inspect it and generate a preview:
 
 ```powershell
+node src/cli.mjs stats "test pdf/figure.pdf" --page 0
 node src/cli.mjs inspect "test pdf/figure.pdf" --limit 20
 node src/cli.mjs query "test pdf/figure.pdf" --type text --text "Study"
 node src/cli.mjs query "test pdf/figure.pdf" --type path --editable
@@ -61,6 +62,10 @@ node src/cli.mjs render "test pdf/figure.pdf" --output "output/preview.png" --dp
 ```
 
 Choose a new output name for each write. Existing files are never overwritten. CLI results are JSON on stdout; errors are JSON on stderr. When consuming JSON, call `node src/cli.mjs` directly to avoid npm's own console output.
+
+Agents can start with `stats` for page dimensions and object counts, then use `query` to select targets. `stats` skips text, font and source-mapping extraction, counts nested panel contents, and does not determine editability. It still parses the page; use `query` or `inspect` for object details.
+
+For agent workflows, use `apply` or `compose` with `--summary --report output/receipt.json`: the model receives a compact result while the full receipt stays in a new local file. Without these options, the existing full JSON output is preserved. See [receipt handling](docs/API.md#compact-receipts--简短回执) for failure and privacy boundaries.
 
 ## JavaScript example
 
@@ -115,8 +120,12 @@ Writes use a new file and reject changed inputs or existing destinations. Object
 
 This checks editing boundaries; it does not judge whether a longer label overlaps a neighbor or whether a layout looks good. Review the preview before using a figure in a manuscript or presentation.
 
+Saving losslessly compresses eligible new streams, including page content, font maps, and panel wrappers. Original content/resource streams and imported image, font, and nested Form resources retain their encoding. Images are not downsampled and old content is not removed. File size depends on the source structure and added fonts; an edit is not guaranteed to produce a smaller file than its input.
+
+Composition shares identical embedded TrueType programs across panel inputs after comparing their stream dictionaries and encoded bytes. Font descriptors, character maps, and widths remain separate. The receipt reports sharing statistics; these are not a measurement of the final file-size reduction. Object edits and cropping keep their original stream-preservation behavior.
+
 - Text keeps its original baseline origin. Automatic reflow, centering, and fitting are not provided.
-- Font extension verifies glyphs, widths, and embedding permissions. It can increase output size; repeated edits can currently embed the same full font again.
+- Font extension verifies glyphs, widths, and embedding permissions. Supported embedded Identity-H TrueType resources are reused after verifying the requested characters' codes, glyph IDs, and advances. Adding a full font can still increase file size; unsupported reuse cases fall back to an independent font resource.
 - Composed panels contain nested Forms. To revise their internal labels, edit the inputs or pre-composition plan and compose again.
 - Encrypted PDFs are not supported. Signed PDFs and files with parsing-repair warnings cannot be edited.
 - Colors are DeviceRGB; ICC/CMYK prepress conversion and cross-reader rendering equivalence are not guaranteed.

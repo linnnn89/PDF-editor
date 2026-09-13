@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { openDocument, sha256 } from '../src/index.mjs';
 import { fixture } from './fixtures.mjs';
 
@@ -16,6 +17,11 @@ const widths = { ' ': 277, A: 722, N: 722, O: 777, S: 666, a: 556, d: 610,
   e: 556, l: 277, n: 610, r: 389, s: 556, t: 333, u: 610, v: 556, y: 556 };
 const near = (a, b) => assert.ok(Math.abs(a-b) < .0002, `${a} != ${b}`);
 const shape = o => ({ type: o.type, text: o.text, font: o.font, boundsPt: o.boundsPt, matrix: o.matrix, fill: o.fill });
+const qpdf = path.join(root, 'vendor/qpdf/qpdf-12.4.1-msvc64/bin/qpdf.exe');
+function fontProgramCount(file) {
+  const json = JSON.parse(execFileSync(qpdf, ['--json', '--json-stream-data=none', file], { windowsHide: true, maxBuffer: 8 * 1024 * 1024 }));
+  return new Set(Object.values(json.qpdf[1]).map(object => object.value?.['/FontFile2']).filter(Boolean)).size;
+}
 
 // Manufacture a font with an ASCII-only cmap and no 'v'. Keep its outlines
 // intact so an independently installed exact face can be verified. No private
@@ -115,6 +121,12 @@ test('a missing subset character loads the exact installed face and remains edit
     const font = receipt.validation.fontExpansions[0];
     assert.equal(font.source, 'matching-installed-font'); assert.equal(font.postScriptName, 'Arial-BoldMT');
     assert.ok(font.observedGlyphsVerified >= 5); assert.ok(font.addedCharacters.includes('v'));
+    const saved = JSON.parse(execFileSync(qpdf, ['--json', '--json-stream-data=none', receipt.output], { windowsHide: true }));
+    const composite = Object.values(saved.qpdf[1]).find(object => object.value?.['/Subtype'] === '/Type0').value;
+    const descendant = saved.qpdf[1][`obj:${composite['/DescendantFonts'][0]}`].value;
+    for (const ref of [composite['/ToUnicode'], descendant['/CIDToGIDMap']]) {
+      assert.equal(saved.qpdf[1][`obj:${ref}`].stream.dict['/Filter'], '/FlateDecode', 'New font maps should use lossless compression');
+    }
     const output = await openDocument(receipt.output);
     try {
       const changed = (await output.inspect({ limit: 100 })).objects.find(o => o.id === target.id);
@@ -122,9 +134,26 @@ test('a missing subset character loads the exact installed face and remains edit
       const next = await output.apply({ sourceSha256: output.source.sha256, output: path.join(work, 'subset-reedited.pdf'), operations: [
         { op: 'text.replace', page: 0, target: changed.id, expect: { text: changed.textSource }, value: 'Overall - A\u00a0v' },
       ] });
-      assert.equal(next.validation.fontExpansions[0].source, 'embedded-font-program');
+      assert.equal(next.validation.fontExpansions.length, 0);
+      assert.equal(next.validation.fontReuses[0].encodingGlyphsAndWidthsVerified, true);
       assert.equal(next.changes[0].after.text, 'Overall - A\u00a0v');
       assert.equal(next.validation.pixelGates[0].changedPixelsOutside, 0);
+      const programs = fontProgramCount(receipt.output);
+      assert.equal(fontProgramCount(next.output), programs);
+      let previous = next.output;
+      for (const [index, value] of ['Overall OR', 'Overall HR', 'Overall CI'].entries()) {
+        await output.open(previous);
+        const current = (await output.inspect({ limit: 100 })).objects.find(o => o.id === target.id);
+        const edited = await output.apply({ sourceSha256: output.source.sha256, output: path.join(work, `reuse-${index}.pdf`), operations: [
+          { op: 'text.replace', page: 0, target: current.id, expect: { text: current.textSource }, value },
+        ] });
+        assert.equal(edited.validation.fontExpansions.length, 0);
+        assert.equal(edited.validation.fontReuses.length, 1);
+        assert.equal(edited.validation.pixelGates[0].changedPixelsOutside, 0);
+        assert.equal(edited.changes[0].after.text, value);
+        assert.equal(fontProgramCount(edited.output), programs, 'Consecutive edits must not add duplicate font programs');
+        previous = edited.output;
+      }
     } finally { await output.close(); }
     await writeFile(path.join(work, 'subset-receipt.json'), JSON.stringify(receipt, null, 2));
   } finally { await editor.close(); }
@@ -145,4 +174,45 @@ test('a matching font name with different outlines fails without publishing or c
     assert.equal((await editor.inspect({ limit: 100 })).objects.find(o => o.id === target.id).textSource, 'Study');
   } finally { await editor.close(); }
   assert.equal(await sha256(input), hash);
+});
+
+test('an unobserved CID with the wrong glyph binding is not reused', async () => {
+  const input = path.join(work, 'binding-source.pdf');
+  await fixture(input, { font: { bytes: bold, name: 'Arial-BoldMT', widths }, content: 'q BT /F1 12 Tf 1 0 0 1 30 115 Tm (Study) Tj ET\n' });
+  const editor = await openDocument(input);
+  try {
+    const target = (await editor.inspect({ limit: 100 })).objects.find(o => o.textSource === 'Study');
+    const full = await editor.apply({ sourceSha256: editor.source.sha256, output: path.join(work, 'binding-full.pdf'), operations: [
+      { op: 'text.replace', page: 0, target: target.id, expect: { text: 'Study' }, value: 'Overall' },
+    ] });
+    const json = JSON.parse(execFileSync(qpdf, ['--json-output', '--json-stream-data=inline', '--decode-level=all', full.output], { windowsHide: true, maxBuffer: 16 * 1024 * 1024 }));
+    const descendant = Object.values(json.qpdf[1]).find(object => object.value?.['/Subtype'] === '/CIDFontType2').value;
+    const stream = json.qpdf[1][`obj:${descendant['/CIDToGIDMap']}`].stream;
+    const glyphs = Buffer.from(stream.data, 'base64');
+    assert.notEqual(glyphs.readUInt16BE(72 * 2), glyphs.readUInt16BE(82 * 2));
+    // Make H draw R while leaving ToUnicode and widths intact. H is not yet
+    // visible, so checking only observed glyphs would miss this binding error.
+    glyphs.writeUInt16BE(glyphs.readUInt16BE(82 * 2), 72 * 2);
+    stream.data = glyphs.toString('base64');
+    delete stream.dict['/Filter']; delete stream.dict['/DecodeParms'];
+    const changedJson = path.join(work, 'binding.json'), changed = path.join(work, 'binding-wrong.pdf');
+    await writeFile(changedJson, JSON.stringify(json));
+    execFileSync(qpdf, [full.output, changed, `--update-from-json=${changedJson}`], { windowsHide: true });
+    const previews = [];
+    for (const [index, file] of [full.output, changed].entries()) {
+      await editor.open(file);
+      const current = (await editor.inspect({ limit: 100 })).objects.find(o => o.id === target.id);
+      const saved = await editor.apply({ sourceSha256: editor.source.sha256, output: path.join(work, `binding-result-${index}.pdf`), operations: [
+        { op: 'text.replace', page: 0, target: current.id, expect: { text: current.textSource }, value: 'Overall H' },
+      ] });
+      assert.equal(saved.validation.fontReuses.length, index === 0 ? 1 : 0);
+      assert.equal(saved.validation.fontExpansions.length, index === 0 ? 0 : 1);
+      assert.equal(saved.validation.pixelGates[0].changedPixelsOutside, 0);
+      await editor.open(saved.output);
+      const png = path.join(work, `binding-result-${index}.png`);
+      await editor.render({ page: 0, dpi: 144, output: png });
+      previews.push(await readFile(png));
+    }
+    assert.deepEqual(previews[0], previews[1], 'Fallback must render the correct H, not the wrongly mapped R');
+  } finally { await editor.close(); }
 });
