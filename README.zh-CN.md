@@ -10,9 +10,18 @@
 
 Agent PDF Editor 为研究者和 agent 开发者提供本地 CLI 与 JavaScript API，用于精确修改已有 PDF 图中的受支持对象。处理过程直接操作 PDF，无需经 SVG 往返转换，也无需从数据重新生成整张图。
 
-> **当前版本：0.2.7-alpha.1。** 仅支持 Windows x64。目前需要从源码构建，尚无桌面 GUI 或预编译安装包。能否编辑具体对象，取决于输入 PDF 的结构和字体。
+> **当前版本：0.2.8-alpha.1。** 支持 Windows x64，需要 Node.js 24。下载下方现成 skill ZIP 即可使用，无需编译。本项目提供 CLI/API，尚无桌面 GUI。能否编辑具体对象，取决于输入 PDF 的结构和字体。
 
 [快速开始](#快速开始) · [JavaScript 示例](#javascript-示例) · [能力范围](#能力范围) · [API 参考](docs/API.md)
+
+## 应该下载哪个版本？
+
+| 你的目的 | 下载什么 | 包里有什么 | 是否需要编译 |
+|---|---|---|---|
+| **直接交给 agent 使用，或调用 CLI** | [现成 skill 安装包](https://github.com/linnnn89/PDF-editor/releases/download/v0.2.8-alpha.1/pdf-editor-skill-v0.2.8-alpha.1-win-x64.zip) | skill 入口和操作手册、含 JS API/CLI 的公开编辑器项目、已编译 EXE、所需 DLL、第三方许可证 | **不需要** |
+| **自行改造、二次开发** | [源码 ZIP](https://github.com/linnnn89/PDF-editor/archive/refs/tags/v0.2.8-alpha.1.zip) 或 `git clone` | C++/JS 源代码、测试、文档、构建和打包脚本、skill 模板 | **原生引擎需要自行编译**；无需下载预编译包 |
+
+现成包**不包含** Node.js、编译器、私人 PDF、Git 历史或构建缓存。运行仍需 Windows x64 和本机已有的 **Node.js 24**。GitHub 的 **Code → Download ZIP** 与 Release 中的 **Source code** 都是源码，不是可以直接使用的安装包。
 
 ## 效果预览
 
@@ -22,7 +31,7 @@ Agent PDF Editor 为研究者和 agent 开发者提供本地 CLI 与 JavaScript 
 |---|---|
 | ![合成 PDF 修改前：含拼写错误的小号标签和细灰线](docs/assets/demo-before.png) | ![合成 PDF 修改后：修正后的蓝色标签和加粗蓝线](docs/assets/demo-after.png) |
 
-预览来自**程序生成的合成样本**，不包含真实研究资料。构建后运行 `node scripts/demo.mjs`，即可在本地生成对应 PDF、预览和验证回执。每次运行使用新的输出目录。
+预览来自**程序生成的合成样本**，不包含真实研究资料。在安装后的 `project/` 目录运行 `node scripts/demo.mjs`，即可在本地生成对应 PDF、预览和验证回执。每次运行使用新的输出目录。
 
 ## 适合做什么
 
@@ -34,20 +43,34 @@ Agent PDF Editor 为研究者和 agent 开发者提供本地 CLI 与 JavaScript 
 
 ## 快速开始
 
-运行需要 **Windows x64**、**Node.js 24** 和 **NTFS 输出目录**。构建还需要已安装的 Visual Studio C++ x64 工具链、Windows SDK、CMake 3.24+ 和 Ninja。构建脚本会查找 Visual Studio 及其附带的 CMake/Ninja；后两项也可从 PATH 查找。
+运行需要 **Windows x64**、**Node.js 24** 和 **NTFS 输出目录**，无需安装第三方 npm 包。
+
+1. 从 [Releases](https://github.com/linnnn89/PDF-editor/releases/tag/v0.2.8-alpha.1) 下载 [pdf-editor-skill-v0.2.8-alpha.1-win-x64.zip](https://github.com/linnnn89/PDF-editor/releases/download/v0.2.8-alpha.1/pdf-editor-skill-v0.2.8-alpha.1-win-x64.zip)。请选择这个附件，不是 GitHub 自动生成的 **Source code** 源码压缩包。
+2. 将压缩包里的整个 `pdf-editor/` 文件夹解压到 agent 宿主的 skills 目录，例如 `~/.agents/skills/`。若已安装旧版，先备份到 skills 发现目录之外，再替换。
+3. 刷新 skills 或新开 agent 会话，使用 `$pdf-editor`。目录内已包含编译好的 EXE/DLL，并通过自身的 `project/` 定位 API。**不需要编译器、构建步骤或另外下载开发项目。**
+
+不通过 agent 也可以试用：在解压后的 `pdf-editor/project/` 目录打开终端，运行：
+
+```powershell
+node src/cli.mjs doctor
+node scripts/demo.mjs
+```
+
+演示命令会输出修改前后的 PDF、PNG 预览和结果目录路径。编辑器在本地处理文件，不调用 AI 服务，也不上传 PDF；外部 agent 宿主自行决定模型调用及哪些工具输出会发送给模型。
+
+### 从源码构建（开发者）
+
+下载源码或克隆仓库即可，无需下载预编译包。使用已有的 Visual Studio C++ x64 工具链、Windows SDK、CMake 3.24+ 和 Ninja。构建脚本会查找 Visual Studio 及其附带的 CMake/Ninja；后两项也可从 PATH 查找。
 
 ```powershell
 git clone https://github.com/linnnn89/PDF-editor.git
 cd PDF-editor
 npm run setup
 npm run build
-node src/cli.mjs doctor
-node scripts/demo.mjs
+npm run skill:pack
 ```
 
-无需安装第三方 npm 包。`setup` 将约 33 MB 的固定版本原生依赖下载到项目的 `vendor/`，校验 SHA-256，并创建被 Git 忽略的 `test pdf/` 目录。它不会安装系统工具或修改全局配置。
-
-演示命令会输出修改前后的 PDF、PNG 预览和结果目录路径。编辑器在本地处理文件，不调用 AI 服务，也不上传 PDF；外部 agent 宿主自行决定模型调用及哪些工具输出会发送给模型。
+`setup` 将约 33 MB 的固定版本原生依赖下载到项目的 `vendor/`，校验 SHA-256，并创建被 Git 忽略的 `test pdf/` 目录。它不会安装系统工具或修改全局配置。`skill:pack` 按公开文件清单，将项目和已编译运行程序打包为一个新的完整 skill 目录，本身不下载依赖。详见[打包说明](skills/README.md)。
 
 ### 使用自己的 PDF
 
@@ -71,7 +94,7 @@ agent 工作流可在 `apply` 或 `compose` 后增加 `--summary --report output
 
 ## JavaScript 示例
 
-将下列代码保存为仓库根目录下的 `edit.mjs`，按实际 PDF 修改输入路径和标签。目标必须是可编辑的文字对象；不支持的字体或字符会返回明确错误。
+将下列代码保存为安装后的 `project/` 目录或已构建仓库根目录下的 `edit.mjs`，按实际 PDF 修改输入路径和标签。目标必须是可编辑的文字对象；不支持的字体或字符会返回明确错误。
 
 ```javascript
 import path from 'node:path';
@@ -104,6 +127,12 @@ try {
 连续执行多项修改时，保持一个 JS 会话并批量提交。每个会话始终编辑打开时的快照；要继续修改保存后的结果，需要重新打开输出文件。裁剪、拼版、分页读取、取消和错误处理见 [API 参考](docs/API.md)。
 
 **需要替换整列名称？** 将完整查询结果和明确的新旧名称对应表交给 `planTextReplacements()`，再用一次 `apply()` 提交返回的操作。可统一设置字号和颜色；缺失、歧义和不支持的目标会集中报告，不返回部分计划。匹配范围限于查询中的完整来源文字，不自动识别 study 行或合并碎片文字。示例见[批量替换标签](docs/API.md#batch-label-replacement--批量替换标签)。
+
+只处理某一列时，可使用 `query({ withinRectPt })`，CLI 对应 `--within-rect x,y,width,height`。若要求改后的文字仍留在该列内，还需给 `apply` 传入 `textBounds`。两者是独立的可选项：前者筛选原始对象，后者检查重开后的结果，集中报告超界目标并拒绝发布该结果，不自动缩字号。详见[文字范围约束](docs/API.md#text-boundary-guards--文字范围约束)和[本地年份格式示例](scripts/rename-year-labels.mjs)。
+
+## 安装 agent skill
+
+使用[快速开始](#快速开始)中的预编译 ZIP。包内 `project/` 携带编辑器项目和原生运行程序，薄入口使用相对于安装目录的路径，移动整个文件夹后引用仍有效。主机仍需 Windows x64 和 Node.js 24。详见[安装说明](skills/README.md)；仓库中的 `skills/pdf-editor/` 是源码模板，并非完整运行包。
 
 ## 能力范围
 

@@ -21,6 +21,7 @@ Writes page.crop, vector compositions, and verified text.replace/text.style/path
 Use inspect results for supportedOperations, textSource and reusableCharacters.
 reusableCharacters is a fast path; other characters require verified font extension.
 --fields selects object fields for inspect/query; id and type are always returned.
+--within-rect x,y,width,height selects fully contained geometric bounds for inspect/query.
 --summary writes a compact receipt to stdout for apply/compose only.
 --report FILE writes the complete receipt to a new file and never overwrites a file.
 `;
@@ -55,6 +56,7 @@ try {
     text: { type: 'string' }, type: { type: 'string' }, id: { type: 'string' }, fields: { type: 'string' },
     output: { type: 'string' }, dpi: { type: 'string' }, help: { type: 'boolean' },
     'no-mapping': { type: 'boolean' }, editable: { type: 'boolean' },
+    'within-rect': { type: 'string' },
     summary: { type: 'boolean' }, report: { type: 'string' },
   }});
   const [command, input, planFile] = positionals;
@@ -62,6 +64,15 @@ try {
   const hasReport = values.report !== undefined;
   if (values.fields !== undefined && !['inspect', 'query'].includes(command)) {
     throw new PdfError('INVALID_ARGUMENT', '--fields is supported only for inspect and query');
+  }
+  let withinRectPt;
+  if (values['within-rect'] !== undefined) {
+    if (!['inspect', 'query'].includes(command)) throw new PdfError('INVALID_ARGUMENT', '--within-rect is supported only for inspect and query');
+    const parts = values['within-rect'].split(',').map(part => part.trim());
+    if (parts.length !== 4 || parts.some(part => !part || !Number.isFinite(Number(part)))) {
+      throw new PdfError('INVALID_ARGUMENT', '--within-rect requires four finite numbers: x,y,width,height');
+    }
+    withinRectPt = Object.fromEntries(['x', 'y', 'width', 'height'].map((key, index) => [key, Number(parts[index])]));
   }
   if (hasReport && values.report.length === 0) throw new PdfError('INVALID_ARGUMENT', '--report requires a nonempty file path');
   if ((values.summary || hasReport) && !['apply', 'compose'].includes(command)) {
@@ -88,6 +99,7 @@ try {
     }
     editor = await openDocument(input, { signal: controller.signal });
     const params = {};
+    if (withinRectPt !== undefined) params.withinRectPt = withinRectPt;
     for (const key of ['page', 'limit', 'offset', 'dpi']) if (values[key] !== undefined) {
       if (!values[key].trim() || !Number.isFinite(Number(values[key]))) throw new PdfError('INVALID_ARGUMENT', `${key} must be numeric`);
       params[key] = Number(values[key]);

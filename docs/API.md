@@ -35,7 +35,7 @@ try {
 }
 ```
 
-`query` and `inspect` share parameters: `page`, `id`, `type`, `text`, `editable`, `offset`, and `limit`. Use `hasMore` to check pagination. `sourceMapping: "verified"` means the object was uniquely matched to its source command and a 96 dpi no-change render was checked. Read `supportedOperations` and `editReason` as well as `editable`.
+`query` and `inspect` share parameters: `page`, `id`, `type`, `text`, `editable`, `withinRectPt`, `offset`, and `limit`. Use `hasMore` to check pagination. `sourceMapping: "verified"` means the object was uniquely matched to its source command and a 96 dpi no-change render was checked. Read `supportedOperations` and `editReason` as well as `editable`.
 
 `query` 与 `inspect` 使用相同参数，可按页、ID、类型、文字和可编辑性筛选，并用 `offset`、`limit` 和 `hasMore` 分页。`sourceMapping: "verified"` 表示对象与来源指令唯一对应，且通过了 96 dpi 无变化渲染核对。还应检查 `supportedOperations`、`editReason` 和 `editable`。
 
@@ -74,6 +74,24 @@ CLI: `--fields textSource,editable,supportedOperations`. Unknown names, non-arra
 
 CLI 使用逗号分隔字段名。未知字段、非数组的 API 参数、非字符串元素或 CLI 中的空字段均报 `INVALID_ARGUMENT`。CLI 选项仅用于 `inspect`/`query`，`stats` 仍只接受页码。
 
+### Select a region / 按区域筛选
+
+```javascript
+const column = { x: 20, y: 60, width: 150, height: 240 }; // choose from your PDF
+const labels = await editor.query({ page: 0, type: 'text', withinRectPt: column,
+  limit: 10000, fields: ['textSource', 'editable', 'supportedOperations'] });
+```
+
+CLI: `node src/cli.mjs query figure.pdf --type text --within-rect 20,60,150,240`.
+
+`withinRectPt` is optional for `query`/`inspect`. It must contain exactly `x`, `y`, `width`, `height`, finite values and positive dimensions, entirely inside the visible page. Coordinates use the same physical top-left pt system as `boundsPt`. Only objects whose complete geometric bounds fit within it are selected, allowing 0.0002 pt numerical tolerance. Partly intersecting objects and objects with missing/invalid bounds are excluded. Selection works with `mapping: false`, happens before pagination and field projection, and does not change the cached index. `counts` still describes the whole page; `matched`/`hasMore` describe the filtered selection. The CLI flag is rejected by other commands.
+
+`withinRectPt` 是 `query`/`inspect` 的可选项，必须恰好包含 `x`、`y`、`width`、`height`；数值有限、宽高为正，整个区域位于可见页内。坐标与 `boundsPt` 一致，为左上角起算的物理 pt。仅选中几何边界完整落入区域的对象，允许 0.0002 pt 数值误差；部分相交、缺失或非法边界的对象不选中。支持 `mapping: false`，筛选发生在分页及字段裁剪之前，不修改缓存索引。`counts` 仍为整页计数，`matched`/`hasMore` 反映筛选结果；其他 CLI 命令拒绝该选项。
+
+This filters existing geometry; it does not detect study rows or guarantee that replacement text fits. Geometric bounds do not resolve clipping or prove visibility. Use `textBounds` when output containment is required.
+
+该功能筛选已有几何对象，不识别 study 行，也不保证替换后的文字仍放得下。几何边界未扣除裁剪，也不能证明内容可见；需要约束输出时另传 `textBounds`。
+
 ## Batch label replacement / 批量替换标签
 
 ```javascript
@@ -102,6 +120,39 @@ The response must contain all matches: `offset === 0`, `hasMore === false`, and 
 Invalid inputs, incomplete pages, duplicate names, missing/ambiguous targets and unsupported targets are collected in `PdfError` with `code: 'INVALID_ARGUMENT'` and `details.issues` (each issue includes `code`, `path`, `message`, and relevant target details). Any issue rejects the entire plan. Font availability, text width and final rendering are not prevalidated by this helper; native `apply` retains its save/reopen, source, object and pixel checks. Reopened glyph verification scans each touched text page once for the whole batch. The helper adds no required agent round trip.
 
 无效输入、分页残缺、名称重复、目标缺失或歧义、目标不支持等问题集中在 `PdfError` 中返回：`code: 'INVALID_ARGUMENT'`、`details.issues`，每项含 `code`、`path`、`message` 和相关目标信息。出现任一问题就拒绝整个计划。该函数不预判字体可用性、字宽或最终渲染；原生 `apply` 保留保存重开、源文件、对象与像素核验。重开后的字形核验对整批每个相关文字页面只扫描一次。辅助函数不要求新增一次 agent 往返。
+
+## Text boundary guards / 文字范围约束
+
+```javascript
+const receipt = await editor.apply({ ...plan,
+  output: path.resolve('output/renamed.pdf'),
+  textBounds: [{ page: labels.page,
+    targets: plan.operations.map(operation => operation.target),
+    withinRectPt: column }]
+});
+```
+
+The optional `textBounds` array contains 1–100 groups, each with exactly `page`, nonempty `targets`, and `withinRectPt`. Each target must be a `text.replace` or `text.style` operation on that page in the same batch; one constraint per target. Unknown, duplicate, unedited or path targets are rejected, as is combination with `page.crop`. Regions follow the query rectangle contract. This is independent of the query filter and is never added implicitly. Existing plans without this field behave as before.
+
+可选 `textBounds` 数组含 1–100 组，每组恰好有 `page`、非空 `targets` 和 `withinRectPt`。目标必须是本批该页中的 `text.replace` 或 `text.style` 操作，每个目标只能约束一次。未知、重复、未修改或路径目标均被拒绝，也不能与 `page.crop` 合用。区域遵循查询矩形规则。它与查询筛选独立，不会隐式添加；未提供时保持原有行为。
+
+After saving to a temporary candidate and reopening it, the engine checks the actual text bounds with a 0.0002 pt tolerance. Failure returns `TEXT_OUTSIDE_BOUNDS` with `details.issues` for all failing constrained targets and no final output is published. A normal overflow issue includes `page`, `target`, `boundsPt`, `withinRectPt`, and `overflowPt: {left,top,right,bottom}` in pt. Missing/invalid geometry is also rejected. Passing the guard continues all original text/object/pixel checks. Successful full and compact receipts include `validation.textBounds: {checkedObjects,tolerancePt}`. Native structured error details propagate through the JS API and CLI.
+
+先保存到临时候选文件并重开，再以 0.0002 pt 容差检查实际文字边界。失败返回 `TEXT_OUTSIDE_BOUNDS`，`details.issues` 汇总所有不符合约束的目标，不发布最终文件。普通越界项包含 `page`、`target`、`boundsPt`、`withinRectPt` 及以 pt 计的 `overflowPt: {left,top,right,bottom}`；缺失或非法几何信息也会拒绝。范围检查通过后继续全部原有文字、对象和像素核验。完整及简短成功回执均包含 `validation.textBounds: {checkedObjects,tolerancePt}`。原生结构化错误经 JS API 和 CLI 完整传递。
+
+The guard does not resize, move or abbreviate text. It checks geometric containment only, not overlap between labels, clipping, reading order or typographic quality. Use a suitable rectangle and inspect a preview for layout acceptance.
+
+该约束不缩字号、不移动或缩写文字，只检查几何包含关系，不检查标签之间的重叠、裁剪、阅读顺序或排版质量。应选择合适区域并检查预览。
+
+### Local formatting rule / 本地格式规则
+
+```powershell
+node scripts/rename-year-labels.mjs --input "test pdf/figure.pdf" --output "output/renamed.pdf" --within-rect 20,60,150,240 --expected-count 7
+```
+
+This narrow example converts selected complete labels from `Author 2020` to `Author (2020)` with ordinary JS. It reports format/count mismatches together before applying and uses the same rectangle as an output guard. `--page` defaults to 0; `--expected-count` is optional (1–100). It prints a compact receipt, does not upload text or call a model, and fails rather than skipping labels whose format differs. Edit the local rule or use an explicit replacement list for other requests; no general rule engine is required.
+
+该窄用途示例以普通 JS 将选中的完整标签从 `Author 2020` 改为 `Author (2020)`，提交前集中报告格式或数量不匹配，并以同一区域约束输出。`--page` 默认为 0，`--expected-count` 可选、范围 1–100。输出简短回执，不上传文字、不调用模型；格式不符合时失败，不静默跳过。其他需求可修改本地规则或提供显式对应表，无需通用规则引擎。
 
 ## Geometry / 坐标
 

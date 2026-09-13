@@ -613,6 +613,34 @@ std::map<std::string, std::string> actualGlyphTexts(LoadedPage& page, const std:
 J applyEdits(Document& original, const J& request) {
     const auto& operations = request.at("operations");
     require(operations.is_array() && !operations.empty() && operations.size() <= 100, "INVALID_ARGUMENT", "Provide 1 to 100 operations");
+    struct TextBoundsTarget { int page; std::string target; Rect region; };
+    std::vector<TextBoundsTarget> textBounds;
+    if (request.contains("textBounds")) {
+        const auto& groups = request.at("textBounds");
+        require(groups.is_array() && !groups.empty() && groups.size() <= 100, "INVALID_ARGUMENT", "Provide 1 to 100 textBounds groups");
+        require(std::none_of(operations.begin(), operations.end(), [](const J& op) { return op.value("op", "") == "page.crop"; }),
+                "INVALID_ARGUMENT", "textBounds cannot be combined with page.crop");
+        std::set<std::string> constrained;
+        for (const auto& group : groups) {
+            require(group.is_object() && group.size() == 3 && group.contains("page") && group.contains("targets") && group.contains("withinRectPt"),
+                    "INVALID_ARGUMENT", "Each textBounds group must contain exactly page, targets and withinRectPt");
+            int pageNo = integer(group.at("page"), "page", static_cast<int>(original.pages.size())-1);
+            auto region = regionRect(group.at("withinRectPt"));
+            auto g = geometry(original.pages.at(pageNo)); inside(region, g.width, g.height);
+            const auto& ids = group.at("targets");
+            require(ids.is_array() && !ids.empty(), "INVALID_ARGUMENT", "textBounds targets must be a nonempty string array");
+            for (const auto& id : ids) {
+                require(id.is_string() && !id.get_ref<const std::string&>().empty(), "INVALID_ARGUMENT", "textBounds targets must be nonempty strings");
+                auto target = id.get<std::string>();
+                require(constrained.insert(target).second, "INVALID_ARGUMENT", "A target may only have one textBounds constraint");
+                require(std::any_of(operations.begin(), operations.end(), [&](const J& op) {
+                    return op.is_object() && op.contains("page") && op.at("page") == pageNo && op.contains("target") && op.at("target") == id
+                        && (op.value("op", "") == "text.replace" || op.value("op", "") == "text.style");
+                }), "INVALID_ARGUMENT", "textBounds target must be a text edit in this batch on the specified page: " + target);
+                textBounds.push_back({pageNo, target, region});
+            }
+        }
+    }
     if (std::all_of(operations.begin(), operations.end(), [](const J& op) { return op.value("op", "") == "page.crop"; })) return crop(original, request);
     writable(original);
     QPDF candidate; candidate.setSuppressWarnings(true); candidate.processMemoryFile("candidate.pdf", original.bytes.data(), original.bytes.size());
@@ -645,6 +673,31 @@ J applyEdits(Document& original, const J& request) {
     require(check.pages.size() == original.pages.size(), "VERIFY_FAILED", "Page count changed");
     auto afterHashes = streamHashes(check.qpdf);
     require(std::includes(afterHashes.begin(), afterHashes.end(), beforeHashes.begin(), beforeHashes.end()), "VERIFY_FAILED", "An original content/resource stream changed");
+    if (request.contains("textBounds")) {
+        J issues = J::array();
+        for (const auto& constraint : textBounds) {
+            const auto& after = objects(check, constraint.page);
+            auto found = std::find_if(after.begin(), after.end(), [&](const J& item) { return item.at("id") == constraint.target; });
+            J issue = {{"page", constraint.page}, {"target", constraint.target}, {"withinRectPt", constraint.region.json()}};
+            if (found == after.end() || !found->contains("boundsPt")) {
+                issue["code"] = "MISSING_BOUNDS"; issue["boundsPt"] = nullptr; issues.push_back(issue); continue;
+            }
+            issue["boundsPt"] = found->at("boundsPt");
+            Rect bounds{};
+            try { bounds = regionRect(found->at("boundsPt")); }
+            catch (const std::exception&) { issue["code"] = "INVALID_BOUNDS"; issues.push_back(issue); continue; }
+            const auto& r = constraint.region;
+            double left = std::max(0., r.x-bounds.x), top = std::max(0., r.y-bounds.y);
+            double right = std::max(0., bounds.x+bounds.w-r.x-r.w), bottom = std::max(0., bounds.y+bounds.h-r.y-r.h);
+            // Physical geometry tolerance only; pixelGate's AA margin does not apply.
+            if (std::max({left, top, right, bottom}) > boundsTolerancePt) {
+                issue["code"] = "TEXT_OUTSIDE_BOUNDS";
+                issue["overflowPt"] = {{"left", left}, {"top", top}, {"right", right}, {"bottom", bottom}};
+                issues.push_back(issue);
+            }
+        }
+        if (!issues.empty()) throw Failure("TEXT_OUTSIDE_BOUNDS", "Edited text does not fit within its required bounds", {{"issues", issues}, {"tolerancePt", boundsTolerancePt}});
+    }
     J changes = J::array(), gates = J::array(), fontExpansions = J::array(), fontReuses = J::array();
     size_t unchangedObjects = 0, whitespaceSourceChecks = 0;
     for (const auto& [pageNo, list] : edits) {
@@ -697,5 +750,9 @@ J applyEdits(Document& original, const J& request) {
     // Untouched pages must keep their decoded contents, including shared streams.
     for (size_t i = 0; i < pages.size(); ++i) if (!edits.contains(static_cast<int>(i))) require(pageContent(original.pages[i]) == pageContent(check.pages[i]), "VERIFY_FAILED", "Untouched page content changed");
     require(!check.qpdf.anyWarnings(), "VERIFY_FAILED", "Saved PDF has parse warnings");
-    return {{"changes", changes}, {"validation", {{"reopened", true}, {"originalRawStreamsPreserved", beforeHashes.size()}, {"patchedContentsVerified", true}, {"unchangedObjectsVerified", unchangedObjects}, {"whitespaceSourceChecks", whitespaceSourceChecks}, {"pixelGates", gates}, {"fontExpansions", fontExpansions}, {"fontReuses", fontReuses}, {"rasterized", false}}}};
+    J result = {{"changes", changes}, {"validation", {{"reopened", true}, {"originalRawStreamsPreserved", beforeHashes.size()}, {"patchedContentsVerified", true}, {"unchangedObjectsVerified", unchangedObjects}, {"whitespaceSourceChecks", whitespaceSourceChecks}, {"pixelGates", gates}, {"fontExpansions", fontExpansions}, {"fontReuses", fontReuses}, {"rasterized", false}}}};
+    if (request.contains("textBounds")) {
+        result["validation"]["textBounds"] = {{"checkedObjects", textBounds.size()}, {"tolerancePt", boundsTolerancePt}};
+    }
+    return result;
 }

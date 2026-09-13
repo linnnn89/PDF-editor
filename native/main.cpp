@@ -35,7 +35,8 @@ namespace fs = std::filesystem;
 
 struct Failure : std::runtime_error {
     std::string code;
-    Failure(std::string c, std::string m) : std::runtime_error(std::move(m)), code(std::move(c)) {}
+    J details;
+    Failure(std::string c, std::string m, J d = nullptr) : std::runtime_error(std::move(m)), code(std::move(c)), details(std::move(d)) {}
 };
 void require(bool condition, const char* code, const std::string& message) {
     if (!condition) throw Failure(code, message);
@@ -82,6 +83,14 @@ struct Rect {
 Rect rect(const J& j) {
     Rect r{number(j.at("x"), "x"), number(j.at("y"), "y"), number(j.at("width"), "width"), number(j.at("height"), "height")};
     require(r.w > 0 && r.h > 0, "INVALID_ARGUMENT", "Rectangle dimensions must be positive");
+    return r;
+}
+constexpr double boundsTolerancePt = .0002;
+Rect regionRect(const J& j) {
+    require(j.is_object() && j.size() == 4 && j.contains("x") && j.contains("y") && j.contains("width") && j.contains("height"),
+            "INVALID_ARGUMENT", "Region must contain exactly x, y, width and height");
+    auto r = rect(j);
+    require(std::isfinite(r.x + r.w) && std::isfinite(r.y + r.h), "INVALID_ARGUMENT", "Region edges must be finite");
     return r;
 }
 void inside(Rect r, double width, double height) {
@@ -331,6 +340,12 @@ J inspect(Document& doc, const J& request) {
     if (request.value("mapping", true)) ensureMapping(doc, pageNo);
     const auto& all = objects(doc, pageNo);
     auto g = geometry(doc.pages.at(pageNo));
+    const bool regional = request.contains("withinRectPt");
+    Rect region{};
+    if (regional) {
+        region = regionRect(request["withinRectPt"]);
+        inside(region, g.width, g.height);
+    }
     J selected = J::array(), counts = J::object();
     int matches = 0;
     for (const auto& item : all) {
@@ -340,6 +355,18 @@ J inspect(Document& doc, const J& request) {
         if (request.contains("text") && item.value("text", "").find(request["text"].get<std::string>()) == std::string::npos) continue;
         if (request.contains("id") && request["id"] != item["id"]) continue;
         if (request.contains("editable") && request["editable"] != item["editable"]) continue;
+        if (regional) {
+            if (!item.contains("boundsPt") || !item["boundsPt"].is_object()) continue;
+            const auto& bounds = item["boundsPt"];
+            bool valid = true;
+            for (const char* key : {"x", "y", "width", "height"})
+                if (!bounds.contains(key) || !bounds[key].is_number() || !std::isfinite(bounds[key].get<double>())) valid = false;
+            if (!valid) continue;
+            Rect b{bounds["x"].get<double>(), bounds["y"].get<double>(), bounds["width"].get<double>(), bounds["height"].get<double>()};
+            if (b.w < 0 || b.h < 0 || !std::isfinite(b.x + b.w) || !std::isfinite(b.y + b.h)) continue;
+            if (b.x < region.x - boundsTolerancePt || b.y < region.y - boundsTolerancePt ||
+                b.x + b.w > region.x + region.w + boundsTolerancePt || b.y + b.h > region.y + region.h + boundsTolerancePt) continue;
+        }
         if (matches >= offset && selected.size() < static_cast<size_t>(limit)) {
             if (!project) selected.push_back(item);
             else {
@@ -600,7 +627,10 @@ int main(int argc, char** argv) {
                     else throw Failure("UNKNOWN_METHOD", "Unknown engine method");
                 }
                 reply = {{"id", id}, {"ok", true}, {"result", value}};
-            } catch (const Failure& e) { reply = {{"id", id}, {"ok", false}, {"error", {{"code", e.code}, {"message", e.what()}}}}; }
+            } catch (const Failure& e) {
+                reply = {{"id", id}, {"ok", false}, {"error", {{"code", e.code}, {"message", e.what()}}}};
+                if (!e.details.is_null()) reply["error"]["details"] = e.details;
+            }
             catch (const J::exception& e) { reply = {{"id", id}, {"ok", false}, {"error", {{"code", "INVALID_ARGUMENT"}, {"message", e.what()}}}}; }
             catch (const std::exception& e) { reply = {{"id", id}, {"ok", false}, {"error", {{"code", "PDF_ERROR"}, {"message", e.what()}}}}; }
             reply["engineMs"] = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();

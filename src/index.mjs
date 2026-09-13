@@ -141,7 +141,9 @@ export class PdfEditor {
       await unchanged([source]);
       const start = performance.now();
       const receipt = await publish(plan.output, [source], async candidate => {
-        try { return await this.#engine.request('apply', { operations: plan.operations, output: candidate }, options); }
+        const request = { operations: plan.operations, output: candidate };
+        if (Object.hasOwn(plan, 'textBounds')) request.textBounds = plan.textBounds;
+        try { return await this.#engine.request('apply', request, options); }
         catch (error) { if (error.details?.workerStopping) await this.#engine.waitForExit(); throw error; }
       });
       Object.assign(receipt, { requestId, sourceSha256: source.sha256, version, totalMs: performance.now() - start, replayed: false });
