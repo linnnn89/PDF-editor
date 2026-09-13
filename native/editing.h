@@ -585,17 +585,30 @@ bool nearJson(const J& a, const J& b) {
     }
     return a == b;
 }
-std::string actualGlyphText(LoadedPage& page, const std::string& id) {
-    auto obj = FPDFPage_GetObject(page.page, std::stoi(id.substr(id.find('/')+1)));
+std::map<std::string, std::string> actualGlyphTexts(LoadedPage& page, const std::map<std::string, J>& expected) {
+    std::map<FPDF_PAGEOBJECT, std::pair<std::string, std::wstring>> targets;
+    for (const auto& [id, value] : expected) if (value.contains("textSource")) {
+        auto obj = FPDFPage_GetObject(page.page, std::stoi(id.substr(id.find('/')+1)));
+        targets.emplace(obj, std::make_pair(id, std::wstring{}));
+    }
+    std::map<std::string, std::string> result;
+    if (targets.empty()) return result;
     int count = FPDFText_CountChars(page.text);
     require(count >= 0 && count <= 1000000, "RESOURCE_LIMIT", "Verification character limit exceeded");
-    std::wstring text;
-    for (int i = 0; i < count; ++i) if (FPDFText_GetTextObject(page.text, i) == obj && FPDFText_IsGenerated(page.text, i) == 0) {
+    // Group only requested objects from the reopened page in one ordered scan.
+    // PDFium-generated separators are excluded; real spaces remain glyphs.
+    for (int i = 0; i < count; ++i) {
+        auto target = targets.find(FPDFText_GetTextObject(page.text, i));
+        if (target == targets.end() || FPDFText_IsGenerated(page.text, i) != 0) continue;
         unsigned u = FPDFText_GetUnicode(page.text, i);
         require(u <= 65535, "UNSUPPORTED_TEXT", "Non-BMP verification is not supported");
-        text += static_cast<wchar_t>(u);
+        target->second.second += static_cast<wchar_t>(u);
     }
-    return utf8(text.data(), static_cast<int>(text.size()));
+    for (const auto& [obj, entry] : targets) {
+        const auto& [id, text] = entry;
+        result.emplace(id, utf8(text.data(), static_cast<int>(text.size())));
+    }
+    return result;
 }
 J applyEdits(Document& original, const J& request) {
     const auto& operations = request.at("operations");
@@ -644,6 +657,7 @@ J applyEdits(Document& original, const J& request) {
             if (!edit.fontExpansion.is_null()) { auto evidence = edit.fontExpansion; evidence["page"] = pageNo; evidence["target"] = edit.target; fontExpansions.push_back(evidence); }
             if (!edit.fontReuse.is_null()) { auto evidence = edit.fontReuse; evidence["page"] = pageNo; evidence["target"] = edit.target; fontReuses.push_back(evidence); }
         }
+        const auto glyphTexts = actualGlyphTexts(check.load(pageNo), expected);
         std::vector<std::pair<J,J>> changed;
         for (size_t i = 0; i < before.size(); ++i) {
             auto id = before[i]["id"].get<std::string>();
@@ -668,7 +682,7 @@ J applyEdits(Document& original, const J& request) {
                 if (key == "textSource") {
                     // Ignore only characters PDFium explicitly identifies as
                     // generated, while retaining real spaces and punctuation.
-                    require(actualGlyphText(check.load(pageNo), id) == value.get<std::string>(), "VERIFY_FAILED", "Reopened glyph text does not match replacement");
+                    require(glyphTexts.at(id) == value.get<std::string>(), "VERIFY_FAILED", "Reopened glyph text does not match replacement");
                 } else if (key == "fill" || key == "stroke") {
                     auto c = after[i][key]["value"];
                     for (int k = 0; k < 3; ++k) require(std::abs(c[k].get<int>()-value[k].get<int>()) <= 1, "VERIFY_FAILED", "Saved color differs");

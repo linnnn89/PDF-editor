@@ -74,6 +74,35 @@ CLI: `--fields textSource,editable,supportedOperations`. Unknown names, non-arra
 
 CLI 使用逗号分隔字段名。未知字段、非数组的 API 参数、非字符串元素或 CLI 中的空字段均报 `INVALID_ARGUMENT`。CLI 选项仅用于 `inspect`/`query`，`stats` 仍只接受页码。
 
+## Batch label replacement / 批量替换标签
+
+```javascript
+import { planTextReplacements, summarizeReceipt } from './src/index.mjs';
+
+const labels = await editor.query({
+  page: 0, type: 'text', limit: 10000,
+  fields: ['textSource', 'editable', 'supportedOperations']
+});
+const plan = planTextReplacements(labels, [
+  { from: 'Author 2020', to: 'Author (2020)' },
+  { from: 'Example 2021', to: 'Example (2021)' }
+], { fontSizePt: 12, fill: '#222222' }); // optional shared style
+const receipt = await editor.apply({ ...plan, output: path.resolve('output/renamed.pdf') });
+console.log(summarizeReceipt(receipt));
+```
+
+`planTextReplacements(queryResult, replacements, style = {})` is a synchronous, local plan builder. It returns `{ sourceSha256, operations }`; add a new absolute `output` path for `apply`. It never edits the input or calls the engine. Each of 1–100 `{from,to}` entries must identify one editable text object by exact `textSource`, with `text.replace` in `supportedOperations`. Only `fontSizePt` in `(0,300]` and `fill` as `#RRGGBB` are accepted in shared style. Replacement text must contain 1–4096 UTF-16 code units and only BMP characters, matching the current native contract.
+
+`planTextReplacements(queryResult, replacements, style = {})` 是同步的本地计划生成函数，返回 `{ sourceSha256, operations }`；调用 `apply` 时另加新的绝对 `output` 路径。它不修改输入，也不调用引擎。每批 1–100 项 `{from,to}`，按精确 `textSource` 唯一选中一个可编辑且支持 `text.replace` 的文字对象。统一样式仅接受 `(0,300]` 内的 `fontSizePt` 和 `#RRGGBB` 格式的 `fill`。替换文本需为 1–4096 个 UTF-16 码元且仅含 BMP 字符，与原生接口限制一致。
+
+The response must contain all matches: `offset === 0`, `hasMore === false`, and `matched === objects.length`. Uniqueness is scoped to the query's filters and readable `textSource` values. Unmapped text without source text cannot establish equality and is never selected. Names split across objects are not joined. This is not a study detector or a substring/regular-expression replacement API.
+
+查询结果必须完整：`offset === 0`、`hasMore === false` 且 `matched === objects.length`。唯一性仅覆盖查询筛选范围内可读取的 `textSource`；未映射且没有来源文字的对象无法参与等值判断，也不会被选中。跨对象的名称不自动合并；该接口不识别 study 行，也不做子串或正则替换。
+
+Invalid inputs, incomplete pages, duplicate names, missing/ambiguous targets and unsupported targets are collected in `PdfError` with `code: 'INVALID_ARGUMENT'` and `details.issues` (each issue includes `code`, `path`, `message`, and relevant target details). Any issue rejects the entire plan. Font availability, text width and final rendering are not prevalidated by this helper; native `apply` retains its save/reopen, source, object and pixel checks. Reopened glyph verification scans each touched text page once for the whole batch. The helper adds no required agent round trip.
+
+无效输入、分页残缺、名称重复、目标缺失或歧义、目标不支持等问题集中在 `PdfError` 中返回：`code: 'INVALID_ARGUMENT'`、`details.issues`，每项含 `code`、`path`、`message` 和相关目标信息。出现任一问题就拒绝整个计划。该函数不预判字体可用性、字宽或最终渲染；原生 `apply` 保留保存重开、源文件、对象与像素核验。重开后的字形核验对整批每个相关文字页面只扫描一次。辅助函数不要求新增一次 agent 往返。
+
 ## Geometry / 坐标
 
 | Field / 字段 | Meaning / 含义 |
