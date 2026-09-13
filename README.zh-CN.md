@@ -10,7 +10,7 @@
 
 Agent PDF Editor 为研究者和 agent 开发者提供本地 CLI 与 JavaScript API，用于精确修改已有 PDF 图中的受支持对象。处理过程直接操作 PDF，无需经 SVG 往返转换，也无需从数据重新生成整张图。
 
-> **当前版本：0.2.6-alpha.1。** 仅支持 Windows x64。目前需要从源码构建，尚无桌面 GUI 或预编译安装包。能否编辑具体对象，取决于输入 PDF 的结构和字体。
+> **当前版本：0.2.7-alpha.1。** 仅支持 Windows x64。目前需要从源码构建，尚无桌面 GUI 或预编译安装包。能否编辑具体对象，取决于输入 PDF 的结构和字体。
 
 [快速开始](#快速开始) · [JavaScript 示例](#javascript-示例) · [能力范围](#能力范围) · [API 参考](docs/API.md)
 
@@ -103,6 +103,8 @@ try {
 
 连续执行多项修改时，保持一个 JS 会话并批量提交。每个会话始终编辑打开时的快照；要继续修改保存后的结果，需要重新打开输出文件。裁剪、拼版、分页读取、取消和错误处理见 [API 参考](docs/API.md)。
 
+**需要替换整列名称？** 将完整查询结果和明确的新旧名称对应表交给 `planTextReplacements()`，再用一次 `apply()` 提交返回的操作。可统一设置字号和颜色；缺失、歧义和不支持的目标会集中报告，不返回部分计划。匹配范围限于查询中的完整来源文字，不自动识别 study 行或合并碎片文字。示例见[批量替换标签](docs/API.md#batch-label-replacement--批量替换标签)。
+
 ## 能力范围
 
 | 需求 | 当前支持情况 |
@@ -139,9 +141,12 @@ try {
 npm test
 npm run bench -- --dir "test pdf" --runs 10
 npm run bench:edits -- --dir "test pdf" --runs 5
+npm run bench:batch -- --input "test pdf/figure.pdf" --replacements "test pdf/names.json" --runs 5
 ```
 
 测试会生成合成 PDF；字体补全测试使用本机已安装的 Arial 常规体和粗体，不随仓库分发字体文件。性能测试使用自己的本地样本，报告写入 `artifacts/`，测量本地处理耗时，不包含 agent 推理或模型调用延迟。
+
+批量基准读取所选页面的明确对应表，例如由 `{ "from": "Author 2020", "to": "Author (2020)" }` 组成的 JSON 数组，比较单个、半列和整列替换，核对重开文字、非目标像素及原文件哈希。请求大小记录 UTF-8 字节数，不等同于模型 token。名称对应表请与私有 PDF 一起放在 `test pdf/`。
 
 PDF、本地研究目录、凭据、生成结果、下载的依赖和构建产物均由 Git 忽略。性能报告和编辑回执可能含提取出的文字和本地路径，应留在本地；提交 issue 附件前请单独检查。
 

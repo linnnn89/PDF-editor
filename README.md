@@ -10,7 +10,7 @@
 
 Agent PDF Editor is a local CLI and JavaScript API for researchers and agent developers who need targeted changes to existing PDF figures. It edits supported PDF objects directly, without an SVG round trip or regenerating the chart from data.
 
-> **Current version: 0.2.6-alpha.1.** Windows x64 only. This is a source-build toolkit, with no desktop GUI or prebuilt installer. Editing support depends on the structure and fonts of the input PDF.
+> **Current version: 0.2.7-alpha.1.** Windows x64 only. This is a source-build toolkit, with no desktop GUI or prebuilt installer. Editing support depends on the structure and fonts of the input PDF.
 
 [Quick start](#quick-start) · [JavaScript example](#javascript-example) · [Capabilities](#capabilities) · [API reference](docs/API.md)
 
@@ -103,6 +103,8 @@ Pages are **zero-based**. Coordinates use physical **pt** from the top-left of t
 
 For several edits, keep one JS session open and batch the operations. A session always edits its opened snapshot: reopen the saved output to continue editing that result. See the [API reference](docs/API.md) for cropping, composition, pagination, cancellation, and error handling.
 
+**Replacing a whole list of labels?** Pass a complete query and an explicit old/new name list to `planTextReplacements()`, then submit the returned operations in one `apply()`. Shared size/color settings apply to every label. Missing, ambiguous and unsupported targets are reported together before a plan is returned. It matches complete source text within the query; it does not infer study rows or join fragmented text. See [batch label replacement](docs/API.md#batch-label-replacement--批量替换标签).
+
 ## Capabilities
 
 | Task | Current support |
@@ -139,9 +141,12 @@ Composition shares identical embedded TrueType programs across panel inputs afte
 npm test
 npm run bench -- --dir "test pdf" --runs 10
 npm run bench:edits -- --dir "test pdf" --runs 5
+npm run bench:batch -- --input "test pdf/figure.pdf" --replacements "test pdf/names.json" --runs 5
 ```
 
 Tests generate their own PDFs. Font-extension tests use locally installed Arial regular and bold; font files are not bundled. Benchmarks use your own local samples and write reports under `artifacts/`. They measure local processing, not agent reasoning or model latency.
+
+The batch benchmark takes a JSON array of `{ "from": "Author 2020", "to": "Author (2020)" }` entries for your selected page. It compares one label, half the list and the complete list, checking reopened text, pixels outside targets and the unchanged input hash. Request sizes are UTF-8 bytes, not model tokens. Keep name lists with private PDFs in `test pdf/`.
 
 PDFs, local research directories, credentials, generated outputs, downloaded dependencies, and build products are ignored by Git. Benchmark reports and editing receipts may contain extracted text and local paths: keep them local, and review attachments before sharing an issue.
 

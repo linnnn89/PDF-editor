@@ -6,6 +6,7 @@ import { Engine, PdfError, enginePath } from './engine.mjs';
 
 export { PdfError } from './engine.mjs';
 export { summarizeReceipt } from './receipt.mjs';
+export { planTextReplacements } from './text-replacements.mjs';
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 export const version = pkg.version;
 export async function sha256(file) {
