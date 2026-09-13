@@ -186,7 +186,9 @@ std::pair<std::string, J> installedFontProgram(const std::string& name, OH descr
 bool equalGlyphOutline(FPDF_FONT a, FPDF_FONT b, wchar_t u) {
     auto pa = FPDFFont_GetGlyphPath(a, u, 1000), pb = FPDFFont_GetGlyphPath(b, u, 1000);
     int na = FPDFGlyphPath_CountGlyphSegments(pa), nb = FPDFGlyphPath_CountGlyphSegments(pb);
-    if (u == 32 && na <= 0 && nb <= 0) return true;
+    // Both ordinary and non-breaking spaces can legitimately have no outline;
+    // callers still verify character coverage and the renderer's advance.
+    if ((u == 32 || u == 0x00a0) && na <= 0 && nb <= 0) return true;
     if (na <= 0 || na != nb || na > 100000) return false;
     for (int i = 0; i < na; ++i) {
         auto sa = FPDFGlyphPath_GetGlyphPathSegment(pa, i), sb = FPDFGlyphPath_GetGlyphPathSegment(pb, i);
@@ -221,4 +223,37 @@ std::shared_ptr<ExpandedFont> expandFont(FontMap& original, FPDF_FONT rendered, 
     result->evidence["observedGlyphsVerified"] = verified;
     original.expansion = result;
     return result;
+}
+
+bool verifyExistingFontCodes(FontMap& original, FPDF_FONT rendered, ExpandedFont& complete, const std::wstring& text) {
+    // A matching face name or ToUnicode entry alone does not prove rendering.
+    // Reuse only the same embedded program with a unique code -> CID -> GID
+    // binding and matching renderer widths. Installed fallback fonts can have
+    // different glyph numbering and must keep their independent resource.
+    if (complete.evidence.value("source", "") != "embedded-font-program" || original.codeBytes != 2 || !hasFontCharacters(original, text)) return false;
+    auto descendant = original.dictionary.getKey("/DescendantFonts").getArrayItem(0);
+    if (!descendant.getKey("/Subtype").isNameAndEquals("/CIDFontType2")) return false;
+    auto originalMap = descendant.getKey("/CIDToGIDMap");
+    bool identity = originalMap.isNull() || originalMap.isNameAndEquals("/Identity");
+    if (!identity && !originalMap.isStream()) return false;
+    std::string oldMap = identity ? "" : decoded(originalMap);
+    auto generated = complete.map.dictionary.getKey("/DescendantFonts").getArrayItem(0).getKey("/CIDToGIDMap");
+    if (!generated.isStream()) return false;
+    std::string newMap = decoded(generated);
+    auto gid = [](const std::string& bytes, unsigned code) -> unsigned {
+        size_t offset = static_cast<size_t>(code)*2;
+        return offset+1 < bytes.size() ? static_cast<unsigned char>(bytes[offset])*256u + static_cast<unsigned char>(bytes[offset+1]) : 0;
+    };
+    std::map<wchar_t, unsigned> verified;
+    for (auto u : text) {
+        if (verified.contains(u)) continue;
+        unsigned code = std::find_if(original.unicode.begin(), original.unicode.end(), [&](const auto& pair) { return pair.second == u; })->first;
+        unsigned reference = std::find_if(complete.map.unicode.begin(), complete.map.unicode.end(), [&](const auto& pair) { return pair.second == u; })->first;
+        unsigned actualGlyph = identity ? code : gid(oldMap, code), expectedGlyph = gid(newMap, reference);
+        if (!expectedGlyph || actualGlyph != expectedGlyph) return false;
+        if (std::abs(glyphWidth(original, code, rendered)-glyphWidth(complete.map, reference, complete.rendered)) > .001) return false;
+        verified[u] = code;
+    }
+    original.verifiedCodes.insert(verified.begin(), verified.end());
+    return true;
 }

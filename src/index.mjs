@@ -5,6 +5,7 @@ import path from 'node:path';
 import { Engine, PdfError, enginePath } from './engine.mjs';
 
 export { PdfError } from './engine.mjs';
+export { summarizeReceipt } from './receipt.mjs';
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 export const version = pkg.version;
 export async function sha256(file) {
@@ -95,6 +96,15 @@ export class PdfEditor {
     return this.#run(async () => {
       const source = this.#requireSource();
       return { ...await this.#engine.request('inspect', params, options), source: { ...source }, capabilities: this.#info.capabilities };
+    });
+  }
+  stats(params = {}, options = {}) {
+    return this.#run(async () => {
+      if (!params || typeof params !== 'object' || Array.isArray(params)) throw new PdfError('INVALID_ARGUMENT', 'stats parameters must be an object');
+      const unknown = Object.keys(params).find(key => key !== 'page');
+      if (unknown) throw new PdfError('INVALID_ARGUMENT', `Unknown stats parameter: ${unknown}`);
+      const source = this.#requireSource();
+      return { ...await this.#engine.request('stats', params, options), source: { ...source }, capabilities: this.#info.capabilities };
     });
   }
   query(params = {}, options = {}) { return this.inspect(params, options); }

@@ -49,6 +49,7 @@ struct FontMap {
     int codeBytes = 0;
     std::map<unsigned, wchar_t> unicode;
     std::map<wchar_t, std::set<unsigned>> observed;
+    std::map<wchar_t, unsigned> verifiedCodes;
     std::string reason;
     std::shared_ptr<ExpandedFont> expansion;
 };
@@ -388,7 +389,7 @@ std::string colorCommand(const J& value, bool stroke) {
 void fields(const J& op, const std::set<std::string>& allowed) {
     for (const auto& [key, value] : op.items()) require(allowed.contains(key), "INVALID_ARGUMENT", "Unknown operation field: " + key);
 }
-struct PreparedEdit { size_t begin, end; std::string patch, target; J expected, fontExpansion; };
+struct PreparedEdit { size_t begin, end; std::string patch, target; J expected, fontExpansion, fontReuse; };
 PreparedEdit prepareEdit(Document& doc, int pageNo, const J& op, QPDF& candidate, QPDFPageObjectHelper candidatePage) {
     auto& mapping = *doc.load(pageNo).mapping;
     std::string target = op.at("target"), kind = op.at("op");
@@ -397,7 +398,7 @@ PreparedEdit prepareEdit(Document& doc, int pageNo, const J& op, QPDF& candidate
     auto& list = objects(doc, pageNo);
     auto it = std::find_if(list.begin(), list.end(), [&](const J& i) { return i["id"] == target; });
     require(it != list.end(), "OBJECT_NOT_FOUND", "Object is not on the requested page");
-    J before = *it, expected = J::object(), fontExpansion;
+    J before = *it, expected = J::object(), fontExpansion, fontReuse;
     std::string patch = "\n";
     if (kind == "path.style") {
         patch += "q\n";
@@ -448,9 +449,16 @@ PreparedEdit prepareEdit(Document& doc, int pageNo, const J& op, QPDF& candidate
             auto text = wide(op.at("value").get<std::string>());
             require(!text.empty() && text.size() <= 4096, "INVALID_ARGUMENT", "Replacement must contain 1 to 4096 UTF-16 code units");
             require(std::none_of(text.begin(), text.end(), [](wchar_t u) { return u >= 0xd800 && u <= 0xdfff; }), "UNSUPPORTED_TEXT", "Replacement currently supports BMP characters only");
-            bool reusable = std::all_of(text.begin(), text.end(), [&](wchar_t u) { return font.observed.contains(u) && font.observed.at(u).size() == 1; });
+            bool reusable = std::all_of(text.begin(), text.end(), [&](wchar_t u) {
+                return (font.observed.contains(u) && font.observed.at(u).size() == 1) || font.verifiedCodes.contains(u);
+            });
             if (!reusable) {
                 auto complete = expandFont(font, rendered, text);
+                if (verifyExistingFontCodes(font, rendered, *complete, text)) {
+                    fontReuse = complete->evidence;
+                    fontReuse["resource"] = writingResource;
+                    fontReuse["encodingGlyphsAndWidthsVerified"] = true;
+                } else {
                 writingFont = &complete->map; writingRendered = complete->rendered;
                 auto resources = candidatePage.getAttribute("/Resources", false).shallowCopy();
                 auto fonts = resources.getKey("/Font").shallowCopy();
@@ -466,11 +474,12 @@ PreparedEdit prepareEdit(Document& doc, int pageNo, const J& op, QPDF& candidate
                 fontExpansion["addedCharacters"] = utf8(characters.data(), static_cast<int>(characters.size()));
                 expected["font"] = complete->evidence["postScriptName"];
                 expected["fontEmbedded"] = true;
+                }
             }
             std::string encoded;
             for (auto u : text) {
                 unsigned code = 0;
-                if (writingFont == &font) code = *font.observed.at(u).begin();
+                if (writingFont == &font) code = font.verifiedCodes.contains(u) ? font.verifiedCodes.at(u) : *font.observed.at(u).begin();
                 else code = std::find_if(writingFont->unicode.begin(), writingFont->unicode.end(), [&](const auto& pair) { return pair.second == u; })->first;
                 if (writingFont->codeBytes == 2) encoded += static_cast<char>(code >> 8);
                 encoded += static_cast<char>(code & 255);
@@ -536,7 +545,7 @@ PreparedEdit prepareEdit(Document& doc, int pageNo, const J& op, QPDF& candidate
         patch += cmd.state.font + " " + decimal(cmd.state.size) + " Tf\n";
         if (op.contains("fill")) patch += cmd.state.fillRestore;
     }
-    return {cmd.begin, cmd.end, patch, target, expected, fontExpansion};
+    return {cmd.begin, cmd.end, patch, target, expected, fontExpansion, fontReuse};
 }
 J pixelGate(Document& before, Document& after, int pageNo, const std::vector<std::pair<J,J>>& changed) {
     Raster a(before, pageNo, 144), b(after, pageNo, 144);
@@ -594,6 +603,7 @@ J applyEdits(Document& original, const J& request) {
     if (std::all_of(operations.begin(), operations.end(), [](const J& op) { return op.value("op", "") == "page.crop"; })) return crop(original, request);
     writable(original);
     QPDF candidate; candidate.setSuppressWarnings(true); candidate.processMemoryFile("candidate.pdf", original.bytes.data(), original.bytes.size());
+    preserveStreamEncoding(candidate);
     auto pages = QPDFPageDocumentHelper::get(candidate).getAllPages();
     std::map<int, std::vector<PreparedEdit>> edits;
     std::set<std::string> targets;
@@ -622,7 +632,7 @@ J applyEdits(Document& original, const J& request) {
     require(check.pages.size() == original.pages.size(), "VERIFY_FAILED", "Page count changed");
     auto afterHashes = streamHashes(check.qpdf);
     require(std::includes(afterHashes.begin(), afterHashes.end(), beforeHashes.begin(), beforeHashes.end()), "VERIFY_FAILED", "An original content/resource stream changed");
-    J changes = J::array(), gates = J::array(), fontExpansions = J::array();
+    J changes = J::array(), gates = J::array(), fontExpansions = J::array(), fontReuses = J::array();
     size_t unchangedObjects = 0, whitespaceSourceChecks = 0;
     for (const auto& [pageNo, list] : edits) {
         require(pageContent(check.pages.at(pageNo)) == expectedContents.at(pageNo), "VERIFY_FAILED", "Saved content does not match planned patches");
@@ -632,6 +642,7 @@ J applyEdits(Document& original, const J& request) {
         for (const auto& edit : list) {
             expected[edit.target] = edit.expected;
             if (!edit.fontExpansion.is_null()) { auto evidence = edit.fontExpansion; evidence["page"] = pageNo; evidence["target"] = edit.target; fontExpansions.push_back(evidence); }
+            if (!edit.fontReuse.is_null()) { auto evidence = edit.fontReuse; evidence["page"] = pageNo; evidence["target"] = edit.target; fontReuses.push_back(evidence); }
         }
         std::vector<std::pair<J,J>> changed;
         for (size_t i = 0; i < before.size(); ++i) {
@@ -663,12 +674,14 @@ J applyEdits(Document& original, const J& request) {
                     for (int k = 0; k < 3; ++k) require(std::abs(c[k].get<int>()-value[k].get<int>()) <= 1, "VERIFY_FAILED", "Saved color differs");
                 } else require(after[i].contains(key) && nearJson(after[i][key],value), "VERIFY_FAILED", "Saved style differs: " + key);
             }
-            changes.push_back({{"target", id}, {"page", pageNo}, {"before", before[i]}, {"after", after[i]}}); changed.emplace_back(before[i],after[i]);
+            J saved = after[i];
+            if (e.contains("textSource")) saved["textSource"] = e["textSource"];
+            changes.push_back({{"target", id}, {"page", pageNo}, {"before", before[i]}, {"after", saved}}); changed.emplace_back(before[i],after[i]);
         }
         gates.push_back(pixelGate(original, check, pageNo, changed));
     }
     // Untouched pages must keep their decoded contents, including shared streams.
     for (size_t i = 0; i < pages.size(); ++i) if (!edits.contains(static_cast<int>(i))) require(pageContent(original.pages[i]) == pageContent(check.pages[i]), "VERIFY_FAILED", "Untouched page content changed");
     require(!check.qpdf.anyWarnings(), "VERIFY_FAILED", "Saved PDF has parse warnings");
-    return {{"changes", changes}, {"validation", {{"reopened", true}, {"originalRawStreamsPreserved", beforeHashes.size()}, {"patchedContentsVerified", true}, {"unchangedObjectsVerified", unchangedObjects}, {"whitespaceSourceChecks", whitespaceSourceChecks}, {"pixelGates", gates}, {"fontExpansions", fontExpansions}, {"rasterized", false}}}};
+    return {{"changes", changes}, {"validation", {{"reopened", true}, {"originalRawStreamsPreserved", beforeHashes.size()}, {"patchedContentsVerified", true}, {"unchangedObjectsVerified", unchangedObjects}, {"whitespaceSourceChecks", whitespaceSourceChecks}, {"pixelGates", gates}, {"fontExpansions", fontExpansions}, {"fontReuses", fontReuses}, {"rasterized", false}}}};
 }

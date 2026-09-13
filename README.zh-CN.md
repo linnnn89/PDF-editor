@@ -10,7 +10,7 @@
 
 Agent PDF Editor 为研究者和 agent 开发者提供本地 CLI 与 JavaScript API，用于精确修改已有 PDF 图中的受支持对象。处理过程直接操作 PDF，无需经 SVG 往返转换，也无需从数据重新生成整张图。
 
-> **当前版本：0.2.2-alpha.1。** 仅支持 Windows x64。目前需要从源码构建，尚无桌面 GUI 或预编译安装包。能否编辑具体对象，取决于输入 PDF 的结构和字体。
+> **当前版本：0.2.5-alpha.1。** 仅支持 Windows x64。目前需要从源码构建，尚无桌面 GUI 或预编译安装包。能否编辑具体对象，取决于输入 PDF 的结构和字体。
 
 [快速开始](#快速开始) · [JavaScript 示例](#javascript-示例) · [能力范围](#能力范围) · [API 参考](docs/API.md)
 
@@ -54,6 +54,7 @@ node scripts/demo.mjs
 将文件放到 `test pdf/figure.pdf`，然后检查对象、生成预览：
 
 ```powershell
+node src/cli.mjs stats "test pdf/figure.pdf" --page 0
 node src/cli.mjs inspect "test pdf/figure.pdf" --limit 20
 node src/cli.mjs query "test pdf/figure.pdf" --type text --text "Study"
 node src/cli.mjs query "test pdf/figure.pdf" --type path --editable
@@ -61,6 +62,10 @@ node src/cli.mjs render "test pdf/figure.pdf" --output "output/preview.png" --dp
 ```
 
 每次写入请使用新的输出名称；工具不会覆盖已有文件。CLI 的结果以 JSON 写入 stdout，错误以 JSON 写入 stderr。需要解析 JSON 时，直接调用 `node src/cli.mjs`，避免混入 npm 自身的控制台输出。
+
+agent 可先用 `stats` 获取页面尺寸和各类对象数量，需要选定目标时再用 `query`。`stats` 跳过文字、字体和来源映射提取，递归计入嵌套面板，但不能判断对象是否可编辑。它仍需解析页面；完整选择与检查使用 `query` 或 `inspect`。
+
+agent 工作流可在 `apply` 或 `compose` 后增加 `--summary --report output/receipt.json`：向模型返回简短结果，将完整回执保存在新的本地文件中。不使用这些选项时仍返回原有完整 JSON。报告失败和隐私边界见[简短回执](docs/API.md#compact-receipts--简短回执)。
 
 ## JavaScript 示例
 
@@ -115,8 +120,12 @@ try {
 
 这项检查用于验证修改范围，不能判断长标签是否遮住邻近内容，也不能代替排版审美。用于论文或演示之前，请检查预览。
 
+保存时对可压缩的新增流进行无损压缩，包括页面内容、字体映射和拼版包装；原始内容流、资源流及导入的图片、字体和嵌套 Form 资源保留编码。没有图片降采样，也不清除旧内容。文件大小取决于输入结构和新增字体，不能保证每次编辑都比原文件小。
+
+拼版会核对流字典和编码字节，共享不同面板输入中完全相同的嵌入 TrueType 字体程序；字体描述符、字符映射和字宽仍然独立。回执记录共享统计，这些数值不等于文件实际缩小量。对象编辑和裁剪继续保留原有的原始流保护行为。
+
 - 文字保留原基线起点，不提供自动重排、居中或适应文本框。
-- 字符补全会核验字形、字宽和嵌入权限，可能增加输出体积；连续修改目前可能重复嵌入同一份完整字体。
+- 字符补全会核验字形、字宽和嵌入权限。对于受支持的嵌入 Identity-H TrueType 资源，会先验证目标字符的编码、字形编号和字宽，再复用原资源。首次补入完整字体仍可能增大文件；不能确认可复用时，使用独立字体资源。
 - 拼版面板使用嵌套 Form。修改其中的标签时，应调整输入文件或拼版前的计划，再执行拼版。
 - 不支持加密 PDF；签名 PDF 及存在解析修复警告的文件不能编辑。
 - 写入颜色为 DeviceRGB，不提供 ICC/CMYK 印前转换，也不保证不同阅读器的渲染完全一致。
