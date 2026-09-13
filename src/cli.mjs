@@ -9,7 +9,7 @@ const help = `Agent PDF Editor ${version} (Windows x64, Node.js 24)
   node src/cli.mjs doctor
   node src/cli.mjs stats INPUT.pdf [--page 0]
   node src/cli.mjs inspect INPUT.pdf [--page 0] [--limit 100] [--offset 0]
-  node src/cli.mjs query INPUT.pdf [--text Control] [--type text] [--page 0]
+  node src/cli.mjs query INPUT.pdf [--text Control] [--type text] [--page 0] [--fields textSource,editable,supportedOperations]
   node src/cli.mjs render INPUT.pdf --output OUTPUT.png [--page 0] [--dpi 144]
   node src/cli.mjs apply INPUT.pdf PLAN.json [--summary] [--report FILE]
   node src/cli.mjs compose PLAN.json [--summary] [--report FILE]
@@ -20,6 +20,7 @@ apply requires sourceSha256, operations and an absolute output path in PLAN.json
 Writes page.crop, vector compositions, and verified text.replace/text.style/path.style.
 Use inspect results for supportedOperations, textSource and reusableCharacters.
 reusableCharacters is a fast path; other characters require verified font extension.
+--fields selects object fields for inspect/query; id and type are always returned.
 --summary writes a compact receipt to stdout for apply/compose only.
 --report FILE writes the complete receipt to a new file and never overwrites a file.
 `;
@@ -51,7 +52,7 @@ process.once('SIGINT', abort); process.once('SIGTERM', abort);
 try {
   const { positionals, values } = parseArgs({ allowPositionals: true, options: {
     page: { type: 'string' }, limit: { type: 'string' }, offset: { type: 'string' },
-    text: { type: 'string' }, type: { type: 'string' }, id: { type: 'string' },
+    text: { type: 'string' }, type: { type: 'string' }, id: { type: 'string' }, fields: { type: 'string' },
     output: { type: 'string' }, dpi: { type: 'string' }, help: { type: 'boolean' },
     'no-mapping': { type: 'boolean' }, editable: { type: 'boolean' },
     summary: { type: 'boolean' }, report: { type: 'string' },
@@ -59,6 +60,9 @@ try {
   const [command, input, planFile] = positionals;
   let result;
   const hasReport = values.report !== undefined;
+  if (values.fields !== undefined && !['inspect', 'query'].includes(command)) {
+    throw new PdfError('INVALID_ARGUMENT', '--fields is supported only for inspect and query');
+  }
   if (hasReport && values.report.length === 0) throw new PdfError('INVALID_ARGUMENT', '--report requires a nonempty file path');
   if ((values.summary || hasReport) && !['apply', 'compose'].includes(command)) {
     throw new PdfError('INVALID_ARGUMENT', '--summary and --report are supported only for apply and compose');
@@ -89,6 +93,7 @@ try {
       params[key] = Number(values[key]);
     }
     for (const key of ['text', 'type', 'id']) if (values[key] !== undefined) params[key] = values[key];
+    if (values.fields !== undefined) params.fields = values.fields.split(',').map(field => field.trim());
     if (values['no-mapping']) params.mapping = false;
     if (values.editable) params.editable = true;
     if (command === 'apply') result = await editor.apply(plan, { signal: controller.signal });

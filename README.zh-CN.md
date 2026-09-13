@@ -10,7 +10,7 @@
 
 Agent PDF Editor 为研究者和 agent 开发者提供本地 CLI 与 JavaScript API，用于精确修改已有 PDF 图中的受支持对象。处理过程直接操作 PDF，无需经 SVG 往返转换，也无需从数据重新生成整张图。
 
-> **当前版本：0.2.5-alpha.1。** 仅支持 Windows x64。目前需要从源码构建，尚无桌面 GUI 或预编译安装包。能否编辑具体对象，取决于输入 PDF 的结构和字体。
+> **当前版本：0.2.6-alpha.1。** 仅支持 Windows x64。目前需要从源码构建，尚无桌面 GUI 或预编译安装包。能否编辑具体对象，取决于输入 PDF 的结构和字体。
 
 [快速开始](#快速开始) · [JavaScript 示例](#javascript-示例) · [能力范围](#能力范围) · [API 参考](docs/API.md)
 
@@ -56,7 +56,7 @@ node scripts/demo.mjs
 ```powershell
 node src/cli.mjs stats "test pdf/figure.pdf" --page 0
 node src/cli.mjs inspect "test pdf/figure.pdf" --limit 20
-node src/cli.mjs query "test pdf/figure.pdf" --type text --text "Study"
+node src/cli.mjs query "test pdf/figure.pdf" --type text --text "Study" --fields textSource,editable,supportedOperations
 node src/cli.mjs query "test pdf/figure.pdf" --type path --editable
 node src/cli.mjs render "test pdf/figure.pdf" --output "output/preview.png" --dpi 144
 ```
@@ -64,6 +64,8 @@ node src/cli.mjs render "test pdf/figure.pdf" --output "output/preview.png" --dp
 每次写入请使用新的输出名称；工具不会覆盖已有文件。CLI 的结果以 JSON 写入 stdout，错误以 JSON 写入 stderr。需要解析 JSON 时，直接调用 `node src/cli.mjs`，避免混入 npm 自身的控制台输出。
 
 agent 可先用 `stats` 获取页面尺寸和各类对象数量，需要选定目标时再用 `query`。`stats` 跳过文字、字体和来源映射提取，递归计入嵌套面板，但不能判断对象是否可编辑。它仍需解析页面；完整选择与检查使用 `query` 或 `inspect`。
+
+使用 `fields`（CLI 为 `--fields`）可只返回任务需要的对象属性，始终包含 ID 和类型，筛选、分页及编辑验证保持一致。不传该参数时仍返回完整详情。这会减少响应内容，不会省去首次页面索引，也不要求在编辑前额外查询一次。
 
 agent 工作流可在 `apply` 或 `compose` 后增加 `--summary --report output/receipt.json`：向模型返回简短结果，将完整回执保存在新的本地文件中。不使用这些选项时仍返回原有完整 JSON。报告失败和隐私边界见[简短回执](docs/API.md#compact-receipts--简短回执)。
 
