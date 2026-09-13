@@ -1,0 +1,19 @@
+{
+  "name": "agent-pdf-editor",
+  "version": "0.2.2-alpha.1",
+  "private": true,
+  "description": "Local Windows PDF figure editing: text, typography, path styling, cropping and vector composition for agents",
+  "type": "module",
+  "engines": { "node": ">=24 <25" },
+  "exports": "./src/index.mjs",
+  "bin": { "pdfedit": "./src/cli.mjs" },
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "build": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1",
+    "doctor": "node src/cli.mjs doctor",
+    "test": "node --test --test-concurrency=1 tests/workflow.test.mjs tests/editing.test.mjs tests/regressions.test.mjs tests/font-extension.test.mjs",
+    "bench": "node scripts/benchmark.mjs",
+    "bench:edits": "node scripts/benchmark-edits.mjs",
+    "pdfedit": "node src/cli.mjs"
+  }
+}
