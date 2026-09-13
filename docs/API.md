@@ -47,6 +47,33 @@ For sizes/counts only, use `stats`; for target details, use `query`; after editi
 
 只需要尺寸及数量时用 `stats`，选定目标时用 `query`，修改后读取回执并按需渲染预览。缩小查询范围能减少返回内容，但首次查询仍可能建立完整页面索引和来源映射。
 
+### Choose response fields / 选择返回字段
+
+```javascript
+const labels = await editor.query({
+  page: 0, type: 'text', editable: true,
+  fields: ['textSource', 'editable', 'supportedOperations']
+});
+// Each object also has id/type; labels.source.sha256 identifies the snapshot.
+```
+
+`fields` is an optional array for `inspect` and `query`. It selects returned object properties, with `id` and `type` always included. An empty array returns only those two fields; properties absent on an object are omitted. Page/source metadata, counts, matching, order and pagination are unaffected. Defaults remain full-detail, and field selection does not alter the cached index or any edit validation. Include `textSource` and editability evidence when preparing text edits. With `mapping: false`, source-mapping fields may be unavailable as before. This reduces JSON/IPC size, not the initial index or mapping work; it does not anonymize selected document text.
+
+`fields` 是 `inspect` 和 `query` 的可选数组，仅选择返回的对象属性，始终附带 `id` 和 `type`。空数组只返回这两项，对象上不存在的属性会省略。页面及源文件信息、统计、匹配、顺序和分页保持一致；默认仍返回完整详情，不改变缓存索引或编辑验证。准备改字时应请求 `textSource` 和可编辑性证据。设置 `mapping: false` 时，来源映射字段仍可能不可用。该参数减少 JSON 和进程间传输量，不省去首次索引或映射工作，也不会将选出的文档文字脱敏。
+
+Allowed names (up to 24 per request) / 允许的字段名（每次最多 24 个）：
+
+```text
+id type depth matrix boundsPt boundsKind fill stroke text
+fontSizeRaw fontSizeYPt font fontEmbedded strokeWidthRaw strokeWidthPt
+segmentCount pixels sourceMapping editable supportedOperations
+editReason sourceCommand textSource reusableCharacters
+```
+
+CLI: `--fields textSource,editable,supportedOperations`. Unknown names, non-array API values, non-string entries and empty CLI names fail with `INVALID_ARGUMENT`. The CLI option applies only to `inspect`/`query`; `stats` retains its page-only contract.
+
+CLI 使用逗号分隔字段名。未知字段、非数组的 API 参数、非字符串元素或 CLI 中的空字段均报 `INVALID_ARGUMENT`。CLI 选项仅用于 `inspect`/`query`，`stats` 仍只接受页码。
+
 ## Geometry / 坐标
 
 | Field / 字段 | Meaning / 含义 |

@@ -312,6 +312,19 @@ J stats(Document& doc, const J& request) {
 }
 void ensureMapping(Document& doc, int index);
 J inspect(Document& doc, const J& request) {
+    const bool project = request.contains("fields");
+    std::set<std::string> projection = {"id", "type"};
+    if (project) {
+        static const std::set<std::string> allowed = {"id", "type", "depth", "matrix", "boundsPt", "boundsKind",
+            "fill", "stroke", "text", "fontSizeRaw", "fontSizeYPt", "font", "fontEmbedded", "strokeWidthRaw",
+            "strokeWidthPt", "segmentCount", "pixels", "sourceMapping", "editable", "supportedOperations",
+            "editReason", "sourceCommand", "textSource", "reusableCharacters"};
+        require(request["fields"].is_array() && request["fields"].size() <= allowed.size(), "INVALID_ARGUMENT", "fields must be an array of at most 24 object field names");
+        for (const auto& field : request["fields"]) {
+            require(field.is_string() && allowed.contains(field.get<std::string>()), "INVALID_ARGUMENT", "Unknown or invalid object field");
+            projection.insert(field.get<std::string>());
+        }
+    }
     int limit = request.contains("limit") ? integer(request["limit"], "limit", 10000) : 100;
     int offset = request.contains("offset") ? integer(request["offset"], "offset", 100000) : 0;
     int pageNo = request.contains("page") ? integer(request["page"], "page", 100000) : 0;
@@ -327,7 +340,16 @@ J inspect(Document& doc, const J& request) {
         if (request.contains("text") && item.value("text", "").find(request["text"].get<std::string>()) == std::string::npos) continue;
         if (request.contains("id") && request["id"] != item["id"]) continue;
         if (request.contains("editable") && request["editable"] != item["editable"]) continue;
-        if (matches >= offset && selected.size() < static_cast<size_t>(limit)) selected.push_back(item);
+        if (matches >= offset && selected.size() < static_cast<size_t>(limit)) {
+            if (!project) selected.push_back(item);
+            else {
+                // Project only the response. Mapping and edit verification must
+                // always retain the complete cached object index.
+                J fields = J::object();
+                for (const auto& field : projection) if (item.contains(field)) fields[field] = item[field];
+                selected.push_back(std::move(fields));
+            }
+        }
         ++matches;
     }
     return {{"page", pageNo}, {"pageCount", doc.pages.size()}, {"widthPt", g.width}, {"heightPt", g.height},

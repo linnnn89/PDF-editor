@@ -10,7 +10,7 @@
 
 Agent PDF Editor is a local CLI and JavaScript API for researchers and agent developers who need targeted changes to existing PDF figures. It edits supported PDF objects directly, without an SVG round trip or regenerating the chart from data.
 
-> **Current version: 0.2.5-alpha.1.** Windows x64 only. This is a source-build toolkit, with no desktop GUI or prebuilt installer. Editing support depends on the structure and fonts of the input PDF.
+> **Current version: 0.2.6-alpha.1.** Windows x64 only. This is a source-build toolkit, with no desktop GUI or prebuilt installer. Editing support depends on the structure and fonts of the input PDF.
 
 [Quick start](#quick-start) · [JavaScript example](#javascript-example) · [Capabilities](#capabilities) · [API reference](docs/API.md)
 
@@ -56,7 +56,7 @@ Place your file at `test pdf/figure.pdf`, then inspect it and generate a preview
 ```powershell
 node src/cli.mjs stats "test pdf/figure.pdf" --page 0
 node src/cli.mjs inspect "test pdf/figure.pdf" --limit 20
-node src/cli.mjs query "test pdf/figure.pdf" --type text --text "Study"
+node src/cli.mjs query "test pdf/figure.pdf" --type text --text "Study" --fields textSource,editable,supportedOperations
 node src/cli.mjs query "test pdf/figure.pdf" --type path --editable
 node src/cli.mjs render "test pdf/figure.pdf" --output "output/preview.png" --dpi 144
 ```
@@ -64,6 +64,8 @@ node src/cli.mjs render "test pdf/figure.pdf" --output "output/preview.png" --dp
 Choose a new output name for each write. Existing files are never overwritten. CLI results are JSON on stdout; errors are JSON on stderr. When consuming JSON, call `node src/cli.mjs` directly to avoid npm's own console output.
 
 Agents can start with `stats` for page dimensions and object counts, then use `query` to select targets. `stats` skips text, font and source-mapping extraction, counts nested panel contents, and does not determine editability. It still parses the page; use `query` or `inspect` for object details.
+
+Use `fields` (CLI `--fields`) to return only the object properties needed for the task. IDs and types are always included; filtering, pagination and edit validation stay the same. Omitting `fields` returns full details. This reduces response size, not the first page-indexing cost, and does not require an extra query before editing.
 
 For agent workflows, use `apply` or `compose` with `--summary --report output/receipt.json`: the model receives a compact result while the full receipt stays in a new local file. Without these options, the existing full JSON output is preserved. See [receipt handling](docs/API.md#compact-receipts--简短回执) for failure and privacy boundaries.
 
