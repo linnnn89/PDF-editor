@@ -1,6 +1,6 @@
 {
   "name": "agent-pdf-editor",
-  "version": "0.2.7-alpha.1",
+  "version": "0.2.8-alpha.1",
   "private": true,
   "description": "Local Windows PDF figure editing: text, typography, path styling, cropping and vector composition for agents",
   "type": "module",
@@ -11,7 +11,7 @@
     "setup": "node scripts/setup.mjs",
     "build": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1",
     "doctor": "node src/cli.mjs doctor",
-    "test": "node --test --test-concurrency=1 tests/workflow.test.mjs tests/editing.test.mjs tests/regressions.test.mjs tests/font-extension.test.mjs tests/compression.test.mjs tests/stats.test.mjs tests/font-sharing.test.mjs tests/query-fields.test.mjs tests/batch-verification.test.mjs tests/text-replacements.test.mjs",
+    "test": "node --test --test-concurrency=1 tests/workflow.test.mjs tests/editing.test.mjs tests/regressions.test.mjs tests/font-extension.test.mjs tests/compression.test.mjs tests/stats.test.mjs tests/font-sharing.test.mjs tests/query-fields.test.mjs tests/batch-verification.test.mjs tests/text-replacements.test.mjs tests/query-region.test.mjs tests/text-bounds.test.mjs",
     "bench": "node scripts/benchmark.mjs",
     "bench:edits": "node scripts/benchmark-edits.mjs",
     "bench:batch": "node scripts/benchmark-batch.mjs",

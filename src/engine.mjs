@@ -33,7 +33,7 @@ export class Engine {
       this.#pending.delete(response.id);
       pending.dispose();
       if (response.ok) pending.resolve({ ...response.result, engineMs: response.engineMs });
-      else pending.reject(new PdfError(response.error.code, response.error.message));
+      else pending.reject(new PdfError(response.error.code, response.error.message, response.error.details));
     });
     this.#exited = new Promise(resolve => {
       this.#child.once('error', error => {

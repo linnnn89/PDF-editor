@@ -10,7 +10,7 @@
 
 Agent PDF Editor 为研究者和 agent 开发者提供本地 CLI 与 JavaScript API，用于精确修改已有 PDF 图中的受支持对象。处理过程直接操作 PDF，无需经 SVG 往返转换，也无需从数据重新生成整张图。
 
-> **当前版本：0.2.7-alpha.1。** 仅支持 Windows x64。目前需要从源码构建，尚无桌面 GUI 或预编译安装包。能否编辑具体对象，取决于输入 PDF 的结构和字体。
+> **当前版本：0.2.8-alpha.1。** 仅支持 Windows x64。目前需要从源码构建，尚无桌面 GUI 或预编译安装包。能否编辑具体对象，取决于输入 PDF 的结构和字体。
 
 [快速开始](#快速开始) · [JavaScript 示例](#javascript-示例) · [能力范围](#能力范围) · [API 参考](docs/API.md)
 
@@ -104,6 +104,12 @@ try {
 连续执行多项修改时，保持一个 JS 会话并批量提交。每个会话始终编辑打开时的快照；要继续修改保存后的结果，需要重新打开输出文件。裁剪、拼版、分页读取、取消和错误处理见 [API 参考](docs/API.md)。
 
 **需要替换整列名称？** 将完整查询结果和明确的新旧名称对应表交给 `planTextReplacements()`，再用一次 `apply()` 提交返回的操作。可统一设置字号和颜色；缺失、歧义和不支持的目标会集中报告，不返回部分计划。匹配范围限于查询中的完整来源文字，不自动识别 study 行或合并碎片文字。示例见[批量替换标签](docs/API.md#batch-label-replacement--批量替换标签)。
+
+只处理某一列时，可使用 `query({ withinRectPt })`，CLI 对应 `--within-rect x,y,width,height`。若要求改后的文字仍留在该列内，还需给 `apply` 传入 `textBounds`。两者是独立的可选项：前者筛选原始对象，后者检查重开后的结果，集中报告超界目标并拒绝发布该结果，不自动缩字号。详见[文字范围约束](docs/API.md#text-boundary-guards--文字范围约束)和[本地年份格式示例](scripts/rename-year-labels.mjs)。
+
+## 安装 agent skill
+
+将整个 [`skills/pdf-editor`](skills/pdf-editor) 文件夹复制到 agent 宿主的 skills 目录即可。入口保持简短，按需读取环境设置、操作手册和规则。Skill 提供操作指南，使用时仍需已构建的 Windows 编辑器仓库。复制、更新和验证方法见[安装说明](skills/README.md)。
 
 ## 能力范围
 

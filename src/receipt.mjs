@@ -24,6 +24,12 @@ export function summarizeReceipt(receipt, options = {}) {
   }
   if (Array.isArray(receipt.validation?.fontExpansions)) validation.fontExpansionCount = receipt.validation.fontExpansions.length;
   if (Array.isArray(receipt.validation?.fontReuses)) validation.fontReuseCount = receipt.validation.fontReuses.length;
+  if (receipt.validation?.textBounds) {
+    validation.textBounds = {
+      checkedObjects: receipt.validation.textBounds.checkedObjects,
+      tolerancePt: receipt.validation.textBounds.tolerancePt,
+    };
+  }
 
   const summary = {
     version: receipt.version,

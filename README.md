@@ -10,7 +10,7 @@
 
 Agent PDF Editor is a local CLI and JavaScript API for researchers and agent developers who need targeted changes to existing PDF figures. It edits supported PDF objects directly, without an SVG round trip or regenerating the chart from data.
 
-> **Current version: 0.2.7-alpha.1.** Windows x64 only. This is a source-build toolkit, with no desktop GUI or prebuilt installer. Editing support depends on the structure and fonts of the input PDF.
+> **Current version: 0.2.8-alpha.1.** Windows x64 only. This is a source-build toolkit, with no desktop GUI or prebuilt installer. Editing support depends on the structure and fonts of the input PDF.
 
 [Quick start](#quick-start) · [JavaScript example](#javascript-example) · [Capabilities](#capabilities) · [API reference](docs/API.md)
 
@@ -104,6 +104,12 @@ Pages are **zero-based**. Coordinates use physical **pt** from the top-left of t
 For several edits, keep one JS session open and batch the operations. A session always edits its opened snapshot: reopen the saved output to continue editing that result. See the [API reference](docs/API.md) for cropping, composition, pagination, cancellation, and error handling.
 
 **Replacing a whole list of labels?** Pass a complete query and an explicit old/new name list to `planTextReplacements()`, then submit the returned operations in one `apply()`. Shared size/color settings apply to every label. Missing, ambiguous and unsupported targets are reported together before a plan is returned. It matches complete source text within the query; it does not infer study rows or join fragmented text. See [batch label replacement](docs/API.md#batch-label-replacement--批量替换标签).
+
+To work within one column, use `query({ withinRectPt })` (CLI: `--within-rect x,y,width,height`). To require edited labels to stay inside that column, also pass `textBounds` to `apply`. These are separate, optional controls: selection uses original geometry; the guard checks the reopened output and reports all out-of-bounds targets without publishing that result. It does not resize text automatically. See [scoped edits](docs/API.md#text-boundary-guards--文字范围约束) and the [local year-formatting example](scripts/rename-year-labels.mjs).
+
+## Install the agent skill
+
+Copy the entire [`skills/pdf-editor`](skills/pdf-editor) folder into your agent host's skills directory. Its short entrypoint loads setup, operations and rules only as needed. The skill provides instructions; a Windows checkout with the editor built is still required. See [installation instructions](skills/README.md) for copying, updating and verifying the skill.
 
 ## Capabilities
 
