@@ -1,23 +1,49 @@
-# Portable PDF editor skill / 可复制的 PDF 编辑 skill
+# PDF editor skill / PDF 编辑 skill
 
-## 中文
+## 直接使用 / Install to use
 
-本目录的 `pdf-editor/` 是操作指南，包含精简入口、环境核验、操作手册和编辑规则。可下载仓库 ZIP 后提取该文件夹，或从已有 checkout 复制。**必须复制整个 `pdf-editor` 文件夹，包括 `references/`，不能只复制 `SKILL.md`。**
+从 [Release](https://github.com/linnnn89/PDF-editor/releases/tag/v0.2.8-alpha.1) 下载 **[pdf-editor-skill-v0.2.8-alpha.1-win-x64.zip](https://github.com/linnnn89/PDF-editor/releases/download/v0.2.8-alpha.1/pdf-editor-skill-v0.2.8-alpha.1-win-x64.zip)**，将其中整个 `pdf-editor/` 文件夹解压到宿主已配置的 skills 目录，例如 `~/.agents/skills/`。无需下载源码或编译；主机需 Windows x64、Node.js 24，输出目录需支持 NTFS 硬链接。更新前请将已有版本备份到 skills 发现目录之外，保留个人修改。
 
-1. 找到宿主已经配置的 skills 目录；Codex 通常使用 `~/.agents/skills`，以当前宿主实际配置为准。
-2. 若目标已存在 `pdf-editor`，先比较内容，将旧版备份到发现目录之外，再更新，不要直接覆盖个人修改。
-3. 将整个文件夹放为 `<skills-directory>/pdf-editor/`，检查其内有 `SKILL.md` 与三个参考文件。
-4. 按宿主正常方式刷新 skills 或新开会话，再使用 `$pdf-editor`。复制完成不代表已连接客户端已经热加载。
+Download the **prebuilt skill ZIP** linked above and extract its `pdf-editor/` folder into your host's configured skills directory, such as `~/.agents/skills/`. No source download or compilation is required. The host needs Windows x64 and Node.js 24; outputs need NTFS hard-link support. Back up an existing installation outside the discovery directory before updating.
 
-安装指南不要求修改 Codex 配置或安装软件。Skill 不捆绑引擎、字体、PDF 或二进制；实际执行仍需要另外的、已编译的本仓库、Windows x64 和 Node.js 24。提供 checkout 路径后，代理会核验包名、JS 与原生引擎版本。0.2.8 系列功能说明以实际 checkout 为准；缺少环境时应先说明，不能自动安装或下载依赖。
+安装包 / Package contents:
 
-## English
+```text
+pdf-editor/
+  SKILL.md                 Thin entrypoint / 薄入口
+  references/              Setup, operations, rules / 按需手册
+  package-manifest.json    File sizes and SHA-256 / 文件清单与哈希
+  project/
+    src/                   JavaScript API and CLI
+    build/bin/             Compiled engine and required DLLs
+    native/                C++ source
+    scripts/               Local examples and developer scripts
+    docs/                  API reference
+    tests/                 Synthetic development tests
+    licenses/              Third-party notices
+    package.json
+```
 
-`pdf-editor/` contains operating guidance: a thin entrypoint, setup verification, an operations manual, and editing rules. Download the repository ZIP and extract that folder, or copy it from an existing checkout. **Copy the entire `pdf-editor` directory, including `references/`, not only `SKILL.md`.**
+完整包保留公开项目文件；不包含 Node.js、编译器、Git 历史、下载缓存、真实 PDF、私人脚本或性能结果。`references/setup.md` 记录所有入口相对路径，从 skill 自身目录定位 `project/`，整体搬迁无需改写机器路径。宿主刷新 skills 或新开会话后使用 `$pdf-editor`。复制文件不证明客户端已热加载；包内 API 的 worker 握手才验证实际运行版本。
 
-1. Locate your host's already configured skills directory. Codex commonly uses `~/.agents/skills`; follow the actual host configuration.
-2. If `pdf-editor` already exists, compare it first and back up the old version outside the discovery directory before updating. Preserve personal modifications.
-3. Place the folder at `<skills-directory>/pdf-editor/`, retaining `SKILL.md` and all three reference files.
-4. Refresh skills or start a new session using your host's normal workflow, then invoke `$pdf-editor`. Copying files does not prove an already connected client hot-loaded them.
+The package retains the public project files. Node.js, compilers, Git history, dependency caches, research PDFs, private scripts and benchmark results are excluded. `references/setup.md` resolves every entrypoint relative to the skill's location. Move the whole folder without rewriting machine-specific paths. Refresh skills or start a new session and invoke `$pdf-editor`. File copying does not establish client hot reload; verify the running worker through its API handshake.
 
-Installing this guide does not require changing Codex configuration or installing software. The skill bundles no engine, fonts, PDFs, or binaries. Execution separately requires a compiled checkout of this repository, Windows x64, and Node.js 24. Supply the checkout path so the agent can verify its package identity and JS/native versions. The guide targets the 0.2.8 series; the actual checkout determines available features. Missing prerequisites must be reported before installing or downloading anything.
+## 自行改造 / Source development
+
+修改项目请下载源码或 `git clone`，**无需下载预编译包**。仓库中的 `skills/pdf-editor/` 是精简模板，并不包含运行程序。按主 README 的开发者说明准备现有工具链，然后运行：
+
+To modify the project, download source or clone the repository; **you do not need the prebuilt package**. The repository's `skills/pdf-editor/` is a thin template, not a runtime installation. Follow the main README's developer prerequisites, then run:
+
+```powershell
+npm run setup
+npm run build
+npm run skill:pack
+```
+
+`setup` 下载固定版本的本地构建依赖；`build` 编译；`skill:pack` 仅从已准备好的项目生成完整 `pdf-editor/` 目录，输出路径会打印到终端。打包命令本身不下载、不安装、不覆盖已有目录。可以用 `npm run skill:pack -- --output <新的绝对目录>/pdf-editor` 指定新目录。
+
+`setup` downloads pinned project-local build dependencies; `build` compiles the engine; `skill:pack` creates the complete skill directory and prints its location. Packaging itself downloads, installs and overwrites nothing. Use `npm run skill:pack -- --output <new-absolute-directory>/pdf-editor` to select a new destination.
+
+打包通过 `skills/project-files.json` 明确列出的公开文件、固定 EXE/DLL 清单及第三方许可文本复制，新增公开项目文件时需更新清单。源码 ZIP 无需 Git 也可打包。入口和参考手册放在包顶层，`project/` 内不再重复放置 `SKILL.md`，以免宿主重复发现。分发时压缩整个生成的 `pdf-editor/` 文件夹，并发布到 Release；不要提交编译文件到源码仓库。
+
+Packaging copies the public files in `skills/project-files.json`, a fixed EXE/DLL list and third-party notices. Update the manifest when public project files are added; packaging a source ZIP does not require Git. The skill entrypoint and references live at the package root, without a duplicate `SKILL.md` under `project/`. Distribute the whole generated folder as a Release ZIP; keep compiled files out of source control.

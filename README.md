@@ -10,9 +10,18 @@
 
 Agent PDF Editor is a local CLI and JavaScript API for researchers and agent developers who need targeted changes to existing PDF figures. It edits supported PDF objects directly, without an SVG round trip or regenerating the chart from data.
 
-> **Current version: 0.2.8-alpha.1.** Windows x64 only. This is a source-build toolkit, with no desktop GUI or prebuilt installer. Editing support depends on the structure and fonts of the input PDF.
+> **Current version: 0.2.8-alpha.1.** Windows x64 with Node.js 24. Download the ready-to-use skill ZIP below; no compilation is needed. This is a CLI/API toolkit without a desktop GUI. Editing support depends on the input PDF's structure and fonts.
 
 [Quick start](#quick-start) · [JavaScript example](#javascript-example) · [Capabilities](#capabilities) · [API reference](docs/API.md)
+
+## Which download do I need?
+
+| Your goal | Download | What's included | Compile? |
+|---|---|---|---|
+| **Use the editor with an agent or CLI** | [Prebuilt skill ZIP](https://github.com/linnnn89/PDF-editor/releases/download/v0.2.8-alpha.1/pdf-editor-skill-v0.2.8-alpha.1-win-x64.zip) | Skill entrypoint and manuals; public editor project with JS API/CLI; compiled EXE, required DLLs, and third-party notices | **No** |
+| **Modify or develop the editor** | [Source code ZIP](https://github.com/linnnn89/PDF-editor/archive/refs/tags/v0.2.8-alpha.1.zip) or `git clone` | C++/JS source, tests, documentation, build/packaging scripts, and skill template | **Yes, for the native engine**; no prebuilt download needed |
+
+The prebuilt package does **not** include Node.js, a compiler, private PDFs, Git history, or build caches. Windows x64 and host-provided **Node.js 24** are required to run it. GitHub's **Code → Download ZIP** and **Source code** release archives contain source, not a ready-to-run installation.
 
 ## See it work
 
@@ -22,7 +31,7 @@ Correct `Panle A` to `Panel A`, increase the label from 12 to 18 pt, and change 
 |---|---|
 | ![Synthetic PDF before editing: a small label with a typo and a thin gray rule](docs/assets/demo-before.png) | ![Synthetic PDF after editing: the corrected blue label and a thicker blue rule](docs/assets/demo-after.png) |
 
-These previews come from a **generated synthetic fixture**, not a research document. Run `node scripts/demo.mjs` after building to produce the PDFs, previews, and validation receipt locally. Each run uses a new output directory.
+These previews come from a **generated synthetic fixture**, not a research document. Run `node scripts/demo.mjs` from the installed `project/` directory to produce the PDFs, previews, and validation receipt locally. Each run uses a new output directory.
 
 ## What you can do
 
@@ -34,20 +43,34 @@ These previews come from a **generated synthetic fixture**, not a research docum
 
 ## Quick start
 
-You need **Windows x64**, **Node.js 24**, and an **NTFS output directory**. Building also requires an existing Visual Studio C++ x64 toolchain, Windows SDK, CMake 3.24+, and Ninja. The build script discovers Visual Studio and its bundled CMake/Ninja, with a PATH fallback for the latter two.
+You need **Windows x64**, **Node.js 24**, and an **NTFS output directory**. There are no third-party npm packages to install.
+
+1. Download [pdf-editor-skill-v0.2.8-alpha.1-win-x64.zip](https://github.com/linnnn89/PDF-editor/releases/download/v0.2.8-alpha.1/pdf-editor-skill-v0.2.8-alpha.1-win-x64.zip) from [Releases](https://github.com/linnnn89/PDF-editor/releases/tag/v0.2.8-alpha.1). Choose this asset, not GitHub's automatic **Source code** archive.
+2. Extract the contained `pdf-editor/` folder into your agent host's skills directory, such as `~/.agents/skills/`. Back up an existing installation outside that discovery directory before replacing it.
+3. Refresh skills or start a new agent session and use `$pdf-editor`. The folder includes the compiled EXE/DLLs and resolves the API through its own `project/` directory. **No compiler, build step or development checkout is required.**
+
+To try it without an agent, open a terminal in the extracted `pdf-editor/project/` directory:
+
+```powershell
+node src/cli.mjs doctor
+node scripts/demo.mjs
+```
+
+The demo prints the paths to its before/after PDFs, PNG previews, and output directory. Processing is local; the editor does not call an AI service or upload PDFs. A separate agent host controls its own model calls and what tool output it sends to a model.
+
+### Build from source (developers)
+
+Download source or clone the repository; you do not need the prebuilt package. Use an existing Visual Studio C++ x64 toolchain, Windows SDK, CMake 3.24+, and Ninja. The build script discovers Visual Studio and its bundled CMake/Ninja, with a PATH fallback for the latter two.
 
 ```powershell
 git clone https://github.com/linnnn89/PDF-editor.git
 cd PDF-editor
 npm run setup
 npm run build
-node src/cli.mjs doctor
-node scripts/demo.mjs
+npm run skill:pack
 ```
 
-There are no third-party npm packages to install. `setup` downloads about 33 MB of pinned native dependencies into `vendor/`, verifies their SHA-256 checksums, and creates the ignored `test pdf/` directory. It does not install system tools or change global configuration.
-
-The demo prints the paths to its before/after PDFs, PNG previews, and output directory. Processing is local; the editor does not call an AI service or upload PDFs. A separate agent host controls its own model calls and what tool output it sends to a model.
+`setup` downloads about 33 MB of pinned native dependencies into `vendor/`, verifies their SHA-256 checksums, and creates the ignored `test pdf/` directory. It does not install system tools or change global configuration. `skill:pack` creates a new self-contained skill directory using a public-file allowlist and the built runtime; it performs no downloads. See [packaging instructions](skills/README.md).
 
 ### Use your own PDF
 
@@ -71,7 +94,7 @@ For agent workflows, use `apply` or `compose` with `--summary --report output/re
 
 ## JavaScript example
 
-Save this as `edit.mjs` in the repository root. Change the input path and label to match your PDF. The target must be an editable text object; unsupported fonts or characters produce a specific error.
+Save this as `edit.mjs` in the installed `project/` directory or the built repository root. Change the input path and label to match your PDF. The target must be an editable text object; unsupported fonts or characters produce a specific error.
 
 ```javascript
 import path from 'node:path';
@@ -109,7 +132,7 @@ To work within one column, use `query({ withinRectPt })` (CLI: `--within-rect x,
 
 ## Install the agent skill
 
-Copy the entire [`skills/pdf-editor`](skills/pdf-editor) folder into your agent host's skills directory. Its short entrypoint loads setup, operations and rules only as needed. The skill provides instructions; a Windows checkout with the editor built is still required. See [installation instructions](skills/README.md) for copying, updating and verifying the skill.
+Use the prebuilt ZIP in [Quick start](#quick-start). It includes the editor project and native runtime under `project/`; the thin entrypoint uses installation-relative paths, so moving the entire folder preserves its references. Windows x64 and Node.js 24 are required. See [installation instructions](skills/README.md); the repository's `skills/pdf-editor/` is the source template, not the complete runtime package.
 
 ## Capabilities
 

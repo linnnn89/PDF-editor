@@ -5,9 +5,9 @@ description: "Edit existing PDF figures with agent-pdf-editor on Windows: replac
 
 # PDF figure editor
 
-Use the local `agent-pdf-editor` checkout for bounded edits to existing PDF figures. This skill supplies operating instructions, not an engine, fonts, or an installed application. It targets the 0.2.8 API series; verify the actual checkout and native version before use.
+Use the bundled `project/` for bounded edits to existing PDF figures. The installable package carries the public project and its native engine; Node.js 24 is a host prerequisite. It targets the 0.2.8 API series; verify the package and native version before use.
 
-1. Read [setup](references/setup.md) to locate and verify the checkout. Use the current directory only if its package identity matches; otherwise use the user's specified checkout. Ask for an unknown location instead of searching whole drives or changing the environment.
+1. Read [setup](references/setup.md) for the installation-relative paths. Resolve `project/` from the directory containing this `SKILL.md`, never from the working directory or another checkout. If it is absent, this is the source template rather than a complete installation; report that distinction instead of searching whole drives.
 2. Read [rules](references/rules.md) before writing. Preserve source files, exact source identity, and the user's requested content scope.
 3. Follow [operations](references/operations.md) for inspection, selective fields, exact replacement plans, optional text-bound validation, receipts, and output previews. Its final sections route crop, composition, and the narrow year-label example.
 

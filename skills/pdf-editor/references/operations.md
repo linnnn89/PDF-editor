@@ -1,6 +1,6 @@
 # Object edits
 
-The following JavaScript assumes a verified absolute `checkout`, absolute `input`, a new absolute `output`, a new absolute `preview`, a user-selected `region` (`{x,y,width,height}`), and requested exact `{from,to}` replacements. Obtain the region and replacement strings from actual inspection and user intent, not this example. All pages are zero-based.
+The following JavaScript assumes `checkout` resolves to this skill's bundled `project/` as described in [setup](setup.md), absolute `input`, a new absolute `output`, a new absolute `preview`, a user-selected `region` (`{x,y,width,height}`), and requested exact `{from,to}` replacements. Obtain the region and replacement strings from actual inspection and user intent, not this example. All pages are zero-based.
 
 ```javascript
 import path from 'node:path';

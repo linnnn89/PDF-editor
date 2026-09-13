@@ -15,6 +15,7 @@
     "bench": "node scripts/benchmark.mjs",
     "bench:edits": "node scripts/benchmark-edits.mjs",
     "bench:batch": "node scripts/benchmark-batch.mjs",
+    "skill:pack": "node scripts/package-skill.mjs",
     "pdfedit": "node src/cli.mjs"
   }
 }

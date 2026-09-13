@@ -17,6 +17,8 @@
 *.pfx
 /.codex/
 /.agents/
+# The generated skill runtime belongs in local packages, not source control.
+/skills/pdf-editor/project/
 
 # Downloaded dependencies, native builds and generated results.
 /vendor/
