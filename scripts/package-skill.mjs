@@ -2,6 +2,7 @@ import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { verifySkillPackage } from './verify-skill-package.mjs';
 
 const root = await realpath(fileURLToPath(new URL('..', import.meta.url)));
 const sha = data => createHash('sha256').update(data).digest('hex');
@@ -93,7 +94,8 @@ async function main() {
     await writeFile(destination, data, { flag: 'wx' });
   }
   const bytes = [...files.values()].reduce((total, data) => total + data.length, 0);
-  console.log(JSON.stringify({ output, version, files: files.size, bytes, sizeMiB: +(bytes / 1048576).toFixed(3) }, null, 2));
+  const verification = await verifySkillPackage(output);
+  console.log(JSON.stringify({ output, version, files: files.size, bytes, sizeMiB: +(bytes / 1048576).toFixed(3), verification }, null, 2));
 }
 
 main().catch(error => { console.error(error.message); process.exitCode = 1; });

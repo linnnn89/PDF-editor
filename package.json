@@ -11,11 +11,12 @@
     "setup": "node scripts/setup.mjs",
     "build": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1",
     "doctor": "node src/cli.mjs doctor",
-    "test": "node --test --test-concurrency=1 tests/workflow.test.mjs tests/editing.test.mjs tests/regressions.test.mjs tests/font-extension.test.mjs tests/compression.test.mjs tests/stats.test.mjs tests/font-sharing.test.mjs tests/query-fields.test.mjs tests/batch-verification.test.mjs tests/text-replacements.test.mjs tests/query-region.test.mjs tests/text-bounds.test.mjs",
+    "test": "node --test --test-concurrency=1 tests/workflow.test.mjs tests/editing.test.mjs tests/regressions.test.mjs tests/font-extension.test.mjs tests/compression.test.mjs tests/stats.test.mjs tests/font-sharing.test.mjs tests/query-fields.test.mjs tests/batch-verification.test.mjs tests/text-replacements.test.mjs tests/query-region.test.mjs tests/text-bounds.test.mjs tests/runtime.test.mjs tests/font-encoding.test.mjs",
     "bench": "node scripts/benchmark.mjs",
     "bench:edits": "node scripts/benchmark-edits.mjs",
     "bench:batch": "node scripts/benchmark-batch.mjs",
     "skill:pack": "node scripts/package-skill.mjs",
+    "skill:verify": "node scripts/verify-skill-package.mjs",
     "pdfedit": "node src/cli.mjs"
   }
 }

@@ -6,7 +6,7 @@ import { doctor, openDocument, composeFigure, PdfError, version } from './index.
 import { summarizeReceipt } from './receipt.mjs';
 
 const help = `Agent PDF Editor ${version} (Windows x64, Node.js 24)
-  node src/cli.mjs doctor
+  node src/cli.mjs doctor [--deep]
   node src/cli.mjs stats INPUT.pdf [--page 0]
   node src/cli.mjs inspect INPUT.pdf [--page 0] [--limit 100] [--offset 0]
   node src/cli.mjs query INPUT.pdf [--text Control] [--type text] [--page 0] [--fields textSource,editable,supportedOperations]
@@ -24,6 +24,7 @@ reusableCharacters is a fast path; other characters require verified font extens
 --within-rect x,y,width,height selects fully contained geometric bounds for inspect/query.
 --summary writes a compact receipt to stdout for apply/compose only.
 --report FILE writes the complete receipt to a new file and never overwrites a file.
+--deep starts and checks the native worker for doctor; failure exits with status 1.
 `;
 const samePath = (left, right) => path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
 async function reserveReport(file, protectedPaths) {
@@ -58,10 +59,12 @@ try {
     'no-mapping': { type: 'boolean' }, editable: { type: 'boolean' },
     'within-rect': { type: 'string' },
     summary: { type: 'boolean' }, report: { type: 'string' },
+    deep: { type: 'boolean' },
   }});
   const [command, input, planFile] = positionals;
   let result;
   const hasReport = values.report !== undefined;
+  if (values.deep !== undefined && command !== 'doctor') throw new PdfError('INVALID_ARGUMENT', '--deep is supported only for doctor');
   if (values.fields !== undefined && !['inspect', 'query'].includes(command)) {
     throw new PdfError('INVALID_ARGUMENT', '--fields is supported only for inspect and query');
   }
@@ -79,7 +82,10 @@ try {
     throw new PdfError('INVALID_ARGUMENT', '--summary and --report are supported only for apply and compose');
   }
   if (!command || values.help || command === 'help') process.stdout.write(help);
-  else if (command === 'doctor') result = await doctor();
+  else if (command === 'doctor') {
+    result = await doctor({ deep: values.deep });
+    if (values.deep && !result.ready) process.exitCode = 1;
+  }
   else if (command === 'compose') {
     const plan = JSON.parse(await readFile(input, 'utf8'));
     if (hasReport) reportReservation = await reserveReport(values.report, [input, plan.output, ...(plan.panels ?? []).map(panel => panel.file)]);

@@ -47,6 +47,38 @@ For direct edits, use actual inspected IDs and `expect: {text: object.textSource
 
 Pass these inside `apply({sourceSha256, output, operations})` using the inspected source hash. Read the checkout's `docs/API.md` for the selected operation's restrictions, especially font/encoding support and existing path strokes/fills.
 
+## Encoding diagnostics before replacement
+
+In packages whose bundled API documents `editReasonCode`, add it and `font` to
+the query's `fields` above when diagnosing read-only labels. Older packages may
+reject the new field; use their documented `editReason` and supported fields.
+Keep `textSource`, `editable`, and `supportedOperations` in edit-planning queries.
+
+1. Query the actual label objects with mapping enabled. Read the reason code
+   together with its message; group by `font` if several labels fail alike.
+2. Current source builds handle direct/indirect simple-font encoding dictionaries
+   with WinAnsi or the printable 32–126 StandardEncoding subset, overlaid by
+   exact Adobe AGLFN 1.7 glyph names. An omitted base only works for the twelve
+   unembedded standard Latin Type1 fonts. A supported ToUnicode stream wins.
+3. `FONT_ENCODING_UNSUPPORTED` means the base cannot be verified;
+   `FONT_ENCODING_INVALID` means the dictionary structure or assignments are
+   invalid; `FONT_GLYPH_UNMAPPED` identifies a used code with an unsupported
+   glyph name. Unknown unused glyphs do not disable unrelated labels. Do not
+   bypass rejection by guessing an encoding, rewriting font dictionaries,
+   normalizing punctuation, or substituting a raster overlay.
+4. Copy the exact `textSource` into `expect.text`. `/minus` is `−` (U+2212),
+   while `/hyphen` is `-` (U+002D). `reusableCharacters` is a useful hint;
+   `apply` still checks character reuse, glyph metrics, and unchanged content.
+5. Save to a new path, reopen, re-query the edited labels, and render a preview.
+   Check symbols, target styling, subsequent text position and untouched labels.
+   Report the receipt's object/stream checks and `changedPixelsOutside`; do not
+   infer successful editing just from `editable: true`.
+
+These changes do not enable missing CID ToUnicode maps, nested-Form edits,
+non-fill text rendering modes, or complex text shaping. For timing questions,
+retain the optional query/edit `timingsMs` locally; it measures native phases,
+not complete wall time or model latency.
+
 ## Region selection and output bounds (0.2.8)
 
 `inspect`/`query` accept `withinRectPt: {x,y,width,height}`. Coordinates are physical pt from the rotated visible page's top-left, with rotation, CropBox offsets, and UserUnit accounted for. The region must fit the page and have positive dimensions. Selection requires full geometric bounds containment with `0.0002` pt tolerance, not mere intersection. Bounds do not resolve every clipping path and do not represent semantic grouping.

@@ -9,6 +9,10 @@ export { summarizeReceipt } from './receipt.mjs';
 export { planTextReplacements } from './text-replacements.mjs';
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 export const version = pkg.version;
+function checkedEngineInfo(info) {
+  if (info.version !== version || info.protocol !== 1) throw new PdfError('ENGINE_VERSION_MISMATCH', 'Native build does not match this JavaScript version. Run npm run build.');
+  return info;
+}
 export async function sha256(file) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(file)) hash.update(chunk);
@@ -66,8 +70,7 @@ export class PdfEditor {
     const editor = new PdfEditor();
     editor.#engine = new Engine();
     try {
-      editor.#info = await editor.#engine.request('hello');
-      if (editor.#info.version !== version || editor.#info.protocol !== 1) throw new PdfError('ENGINE_VERSION_MISMATCH', 'Native build does not match this JavaScript version. Run npm run build.');
+      editor.#info = checkedEngineInfo(await editor.#engine.request('hello'));
       return editor;
     } catch (error) { await editor.#engine.close(); throw error; }
   }
@@ -185,8 +188,28 @@ export async function composeFigure(plan, options = {}) {
   const editor = await PdfEditor.create();
   try { return await editor.compose(plan, options); } finally { await editor.close(); }
 }
-export async function doctor() {
+export async function doctor(options = {}) {
+  if (!options || typeof options !== 'object' || Array.isArray(options) ||
+      Object.keys(options).some(key => key !== 'deep') ||
+      (options.deep !== undefined && typeof options.deep !== 'boolean')) {
+    throw new PdfError('INVALID_ARGUMENT', 'doctor accepts only an optional boolean deep');
+  }
   let built = false;
   try { await access(enginePath); built = true; } catch {}
-  return { version, platform: process.platform, arch: process.arch, node: process.version, supported: process.platform === 'win32' && process.arch === 'x64' && Number(process.versions.node.split('.')[0]) === 24, enginePath, built, workerStarted: false };
+  const result = { version, platform: process.platform, arch: process.arch, node: process.version, supported: process.platform === 'win32' && process.arch === 'x64' && Number(process.versions.node.split('.')[0]) === 24, enginePath, built, workerStarted: false };
+  if (!options.deep) return result;
+  result.ready = false;
+  let engine;
+  try {
+    if (!result.supported) throw new PdfError('UNSUPPORTED_RUNTIME', 'Windows x64 and Node.js 24 are required');
+    if (!built) throw new PdfError('ENGINE_NOT_FOUND', 'Native engine is missing. Run npm run setup and npm run build.');
+    engine = new Engine();
+    const info = await engine.request('hello', {}, { timeoutMs: 5000 });
+    result.workerStarted = true;
+    result.engine = checkedEngineInfo(info);
+    result.ready = true;
+  } catch (error) {
+    result.error = { code: error.code ?? 'ERROR', message: error.message, details: error.details };
+  } finally { if (engine) await engine.close(); }
+  return result;
 }

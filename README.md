@@ -72,6 +72,8 @@ npm run skill:pack
 
 `setup` downloads about 33 MB of pinned native dependencies into `vendor/`, verifies their SHA-256 checksums, and creates the ignored `test pdf/` directory. It does not install system tools or change global configuration. `skill:pack` creates a new self-contained skill directory using a public-file allowlist and the built runtime; it performs no downloads. See [packaging instructions](skills/README.md).
 
+Current source builds add `node src/cli.mjs doctor --deep`, which starts the native engine to check its version and library loading, exiting with status 1 on failure. `skill:pack` verifies the packaged file manifest and runs the inspect/edit/reopen/render demo from a relocated directory containing Unicode and spaces. Verification outputs stay in `artifacts/package-checks/`, outside the distributable package. The Windows CI workflow uses the same build, test and package-verification commands.
+
 ### Use your own PDF
 
 Place your file at `test pdf/figure.pdf`, then inspect it and generate a preview:
@@ -149,6 +151,12 @@ Use the prebuilt ZIP in [Quick start](#quick-start). It includes the editor proj
 
 ## Validation and limits
 
+Source builds also accept simple Type1/TrueType encoding dictionaries with
+WinAnsi or the supported StandardEncoding subset, plus verified `Differences`
+glyph names. Mathematical minus (`−`) and hyphen (`-`) remain distinct.
+Read-only objects provide `editReasonCode` for programmatic diagnostics; see
+[encoding support and limits](docs/API.md#simple-font-encoding-dictionaries--简单字体编码字典).
+
 Writes use a new file and reject changed inputs or existing destinations. Object edits are reopened and checked against the requested changes, original streams, and untouched objects. A PDFium comparison at **144 dpi** requires zero changed pixels outside the allowed target regions, including a fixed antialiasing margin.
 
 This checks editing boundaries; it does not judge whether a longer label overlaps a neighbor or whether a layout looks good. Review the preview before using a figure in a manuscript or presentation.
@@ -174,6 +182,8 @@ npm run bench:batch -- --input "test pdf/figure.pdf" --replacements "test pdf/na
 ```
 
 Tests generate their own PDFs. Font-extension tests use locally installed Arial regular and bold; font files are not bundled. Benchmarks use your own local samples and write reports under `artifacts/`. They measure local processing, not agent reasoning or model latency.
+
+Source builds return `timingsMs` for queries and object edits, separating native indexing, mapping, saving, reopening and validation phases. The `bench:edits` and `bench:batch` JSON reports retain these measurements. They exclude JS hashing, IPC serialization and final publication; use the existing wall-clock measurements for end-to-end comparisons. See [API details](docs/API.md#native-phase-timings--原生分阶段耗时).
 
 The batch benchmark takes a JSON array of `{ "from": "Author 2020", "to": "Author (2020)" }` entries for your selected page. It compares one label, half the list and the complete list, checking reopened text, pixels outside targets and the unchanged input hash. Request sizes are UTF-8 bytes, not model tokens. Keep name lists with private PDFs in `test pdf/`.
 

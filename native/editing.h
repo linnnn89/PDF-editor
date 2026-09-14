@@ -1,4 +1,5 @@
 #pragma once
+#include "glyph_names.h"
 
 // Included after the document/geometry helpers. All edits are against a fresh
 // QPDF snapshot; PDFium objects are never used as a write backend.
@@ -51,6 +52,8 @@ struct FontMap {
     std::map<wchar_t, std::set<unsigned>> observed;
     std::map<wchar_t, unsigned> verifiedCodes;
     std::string reason;
+    std::string reasonCode = "UNSUPPORTED_FONT";
+    std::map<unsigned, std::string> unmappedGlyphs;
     std::shared_ptr<ExpandedFont> expansion;
 };
 struct PageMapping {
@@ -180,6 +183,59 @@ void readUnicodeMap(OH cmap, int codeBytes, Accept accept) {
         }
     }
 }
+void readEncodingDictionary(FontMap& font, OH encoding) {
+    auto type = encoding.getKey("/Type"), base = encoding.getKey("/BaseEncoding");
+    require(type.isNull() || type.isNameAndEquals("/Encoding"), "FONT_ENCODING_INVALID", "Encoding dictionary Type must be /Encoding");
+    require(base.isNull() || base.isName(), "FONT_ENCODING_INVALID", "BaseEncoding must be a name");
+    bool win = base.isNameAndEquals("/WinAnsiEncoding");
+    bool standard = base.isNameAndEquals("/StandardEncoding");
+    if (base.isNull()) {
+        // Without BaseEncoding the font's built-in encoding applies. Only the
+        // twelve non-symbolic, unembedded standard Type1 fonts are known here.
+        static const std::set<std::string> latin = {"/Helvetica", "/Helvetica-Bold", "/Helvetica-Oblique", "/Helvetica-BoldOblique",
+            "/Times-Roman", "/Times-Bold", "/Times-Italic", "/Times-BoldItalic", "/Courier", "/Courier-Bold", "/Courier-Oblique", "/Courier-BoldOblique"};
+        auto name = font.dictionary.getKey("/BaseFont"), descriptor = font.dictionary.getKey("/FontDescriptor");
+        bool embedded = descriptor.isDictionary() && (descriptor.hasKey("/FontFile") || descriptor.hasKey("/FontFile2") || descriptor.hasKey("/FontFile3"));
+        standard = font.dictionary.getKey("/Subtype").isNameAndEquals("/Type1") && name.isName() && latin.contains(name.getName()) && !embedded;
+    }
+    require(win || standard, "FONT_ENCODING_UNSUPPORTED", "Encoding dictionary requires WinAnsiEncoding, StandardEncoding, or a known built-in standard font encoding");
+    for (unsigned c = 32; c <= (win ? 255u : 126u); ++c) {
+        wchar_t u{}; char byte = static_cast<char>(c);
+        if (win) {
+            // PDF WinAnsi uses bullet for the unassigned Windows-1252 slots,
+            // and /space and /hyphen at 160 and 173 (not NBSP/soft hyphen).
+            if (c == 127 || c == 129 || c == 141 || c == 143 || c == 144 || c == 157) u = 0x2022;
+            else if (c == 160) u = 0x20;
+            else if (c == 173) u = 0x2d;
+            else if (MultiByteToWideChar(1252, MB_ERR_INVALID_CHARS, &byte, 1, &u, 1) != 1) continue;
+        } else u = static_cast<wchar_t>(c == 39 ? 0x2019 : c == 96 ? 0x2018 : c);
+        font.unicode[c] = u;
+    }
+    auto differences = encoding.getKey("/Differences");
+    if (differences.isNull()) return;
+    require(differences.isArray(), "FONT_ENCODING_INVALID", "Differences must be an array");
+    require(differences.getArrayNItems() <= 512, "FONT_ENCODING_INVALID", "Differences exceeds 256 character assignments and start codes");
+    int code = -1;
+    std::set<unsigned> assigned;
+    for (auto entry : differences.getArrayAsVector()) {
+        if (entry.isInteger()) {
+            auto number = entry.getIntValue();
+            require(number >= 0 && number <= 255, "FONT_ENCODING_INVALID", "Differences character code must be in 0..255");
+            code = static_cast<int>(number);
+        } else {
+            require(entry.isName() && code >= 0 && code <= 255, "FONT_ENCODING_INVALID", "Differences requires a start code followed by glyph names within 0..255");
+            require(assigned.insert(code).second, "FONT_ENCODING_INVALID", "Differences assigns the same character code more than once");
+            const auto name = entry.getName();
+            // Always remove the base mapping first. Unknown names must never
+            // silently reuse a different glyph from the base encoding.
+            font.unicode.erase(code);
+            auto found = simpleGlyphNames().find(name);
+            if (found != simpleGlyphNames().end()) font.unicode[code] = found->second;
+            else font.unmappedGlyphs[code] = name;
+            ++code;
+        }
+    }
+}
 FontMap readFont(OH font) {
     FontMap result; result.dictionary = font;
     try {
@@ -198,6 +254,8 @@ FontMap readFont(OH font) {
         } else {
             require(!cid, "UNSUPPORTED_FONT", "CID font has no ToUnicode map");
             auto encoding = font.getKey("/Encoding"), base = font.getKey("/BaseFont");
+            if (encoding.isDictionary()) readEncodingDictionary(result, encoding);
+            else {
             bool win = encoding.isNameAndEquals("/WinAnsiEncoding");
             bool standard = encoding.isNull() || encoding.isNameAndEquals("/StandardEncoding");
             require(win || (standard && base.isName() && (base.getName().find("Helvetica") != std::string::npos || base.getName().find("Times") != std::string::npos || base.getName().find("Courier") != std::string::npos)), "UNSUPPORTED_FONT", "Font encoding requires a ToUnicode map");
@@ -207,13 +265,14 @@ FontMap readFont(OH font) {
                 else u = static_cast<wchar_t>(c == 39 ? 0x2019 : c == 96 ? 0x2018 : c);
                 result.unicode[c] = u;
             }
+            }
         }
         require(!result.unicode.empty(), "UNSUPPORTED_FONT", "No supported single-Unicode glyph mappings");
-    } catch (const Failure& e) { result.reason = e.what(); result.codeBytes = 0; }
+    } catch (const Failure& e) { result.reason = e.what(); result.reasonCode = e.code; result.codeBytes = 0; }
     return result;
 }
 std::vector<unsigned> charCodes(const std::vector<OH>& items, const FontMap& font) {
-    require(font.codeBytes > 0, "UNSUPPORTED_FONT", font.reason);
+    require(font.codeBytes > 0, font.reasonCode.c_str(), font.reason);
     std::vector<unsigned> codes;
     for (auto item : items) {
         if (item.isNumber()) continue;
@@ -222,6 +281,7 @@ std::vector<unsigned> charCodes(const std::vector<OH>& items, const FontMap& fon
         require(bytes.size() % font.codeBytes == 0, "UNSUPPORTED_TEXT", "Incomplete character code");
         for (size_t i = 0; i < bytes.size(); i += font.codeBytes) {
             auto code = codeNumber(bytes.substr(i, font.codeBytes));
+            if (font.unmappedGlyphs.contains(code)) throw Failure("FONT_GLYPH_UNMAPPED", "Character code " + std::to_string(code) + " uses unsupported glyph name " + font.unmappedGlyphs.at(code));
             require(font.unicode.contains(code), "UNSUPPORTED_TEXT", "A character has no verified single-Unicode mapping");
             codes.push_back(code);
         }
@@ -239,7 +299,7 @@ double uniformScale(const Matrix& m, double unit) {
     return x*unit;
 }
 J fingerprint(J item) {
-    for (const char* key : {"id", "depth", "sourceMapping", "editable", "supportedOperations", "editReason", "textSource", "reusableCharacters", "strokeWidthPt", "sourceCommand"}) item.erase(key);
+    for (const char* key : {"id", "depth", "sourceMapping", "editable", "supportedOperations", "editReason", "editReasonCode", "textSource", "reusableCharacters", "strokeWidthPt", "sourceCommand"}) item.erase(key);
     return item;
 }
 struct Raster {
@@ -318,8 +378,8 @@ void ensureMapping(Document& doc, int index) {
             // Top-level IDs equal the PDFium enumeration index, while the JSON
             // list also includes nested Form children. Resolve by ID explicitly.
             std::string probeId = "p" + std::to_string(index) + "/" + std::to_string(probeIndices.front());
-            auto found = std::find_if(probeObjects.begin(), probeObjects.end(), [&](const J& v) { return v["id"] == probeId; });
-            if (found == probeObjects.end()) continue;
+            const auto* found = findObject(probe, index, probeId);
+            if (!found) continue;
             auto shape = fingerprint(*found).dump();
             if (originalByShape[shape].size() != 1 || probeByShape[shape].size() != 1) continue;
             auto& item = all[originalByShape.at(shape).front()];
@@ -341,12 +401,15 @@ void ensureMapping(Document& doc, int index) {
                     item["supportedOperations"] = {"path.style"};
                 } else continue;
                 item["editable"] = true; mapping->targets[item["id"].get<std::string>()] = commandNo;
-            } catch (const Failure& e) { item["editReason"] = e.what(); }
+            } catch (const Failure& e) { item["editReason"] = e.what(); item["editReasonCode"] = e.code; }
         }
-        for (auto& item : all) if (!item["editable"].get<bool>() && !item.contains("editReason")) item["editReason"] = "No unique top-level text/path command mapping";
+        for (auto& item : all) if (!item["editable"].get<bool>() && !item.contains("editReason")) {
+            item["editReason"] = "No unique top-level text/path command mapping";
+            item["editReasonCode"] = "SOURCE_MAPPING_UNAVAILABLE";
+        }
     } catch (const std::exception& e) {
         mapping->targets.clear();
-        for (auto& item : all) { item["editable"] = false; item["sourceMapping"] = "unmapped"; item["supportedOperations"] = J::array(); item["editReason"] = e.what(); }
+        for (auto& item : all) { item["editable"] = false; item["sourceMapping"] = "unmapped"; item["supportedOperations"] = J::array(); item["editReason"] = e.what(); item["editReasonCode"] = "SOURCE_MAPPING_FAILED"; }
     }
     loaded.mapping = std::move(mapping);
 }
@@ -356,7 +419,15 @@ double glyphWidth(FontMap& font, unsigned code, FPDF_FONT rendered) {
     // actual metrics, including fractional /Widths and /W inputs, so restoring
     // the cursor matches the source as this renderer originally interpreted it.
     auto unicode = font.unicode.at(code);
-    require(std::count_if(font.unicode.begin(), font.unicode.end(), [&](const auto& pair) { return pair.second == unicode; }) == 1,
+    auto matches = [&](const auto& pair) { return pair.second == unicode; };
+    // PDFium's simple-font reverse lookup picks the first encoded occurrence.
+    // WinAnsi has duplicate space/hyphen/bullet slots: the first code has
+    // unambiguous metrics. Other aliases (possibly carrying different Widths)
+    // remain rejected, as do dictionaries with unknown renderer mappings.
+    bool canonical = font.dictionary.getKey("/Encoding").isDictionary() &&
+        !font.dictionary.getKey("/ToUnicode").isStream() && font.unmappedGlyphs.empty() &&
+        std::find_if(font.unicode.begin(), font.unicode.end(), matches)->first == code;
+    require(canonical || std::count_if(font.unicode.begin(), font.unicode.end(), matches) == 1,
             "UNSUPPORTED_FONT", "Unicode maps to multiple font codes; metric lookup is ambiguous");
     float width = 0;
     require(FPDFFont_GetGlyphWidth(rendered, unicode, 1000, &width) && std::isfinite(width) && width >= 0 && width < 1000000,
@@ -395,10 +466,9 @@ PreparedEdit prepareEdit(Document& doc, int pageNo, const J& op, QPDF& candidate
     std::string target = op.at("target"), kind = op.at("op");
     require(mapping.targets.contains(target), "OBJECT_NOT_EDITABLE", "Target has no supported, unique source mapping: " + target);
     const auto& cmd = mapping.commands.at(mapping.targets.at(target));
-    auto& list = objects(doc, pageNo);
-    auto it = std::find_if(list.begin(), list.end(), [&](const J& i) { return i["id"] == target; });
-    require(it != list.end(), "OBJECT_NOT_FOUND", "Object is not on the requested page");
-    J before = *it, expected = J::object(), fontExpansion, fontReuse;
+    const auto* found = findObject(doc, pageNo, target);
+    require(found != nullptr, "OBJECT_NOT_FOUND", "Object is not on the requested page");
+    J before = *found, expected = J::object(), fontExpansion, fontReuse;
     std::string patch = "\n";
     if (kind == "path.style") {
         patch += "q\n";
@@ -611,6 +681,7 @@ std::map<std::string, std::string> actualGlyphTexts(LoadedPage& page, const std:
     return result;
 }
 J applyEdits(Document& original, const J& request) {
+    PhaseTimings timings;
     const auto& operations = request.at("operations");
     require(operations.is_array() && !operations.empty() && operations.size() <= 100, "INVALID_ARGUMENT", "Provide 1 to 100 operations");
     struct TextBoundsTarget { int page; std::string target; Rect region; };
@@ -652,11 +723,14 @@ J applyEdits(Document& original, const J& request) {
         auto kind = op.at("op").get<std::string>();
         require(kind == "text.replace" || kind == "text.style" || kind == "path.style", "UNSUPPORTED_OPERATION", "Use a separate batch for crop; supported object edits: text.replace, text.style, path.style");
         int pageNo = integer(op.at("page"), "page", static_cast<int>(original.pages.size())-1);
+        timings.finish("prepare");
         ensureMapping(original, pageNo);
+        timings.finish("sourceMapping");
         auto target = op.at("target").get<std::string>();
         require(targets.insert(target).second, "INVALID_ARGUMENT", "Combine a target's text/style changes in one operation");
         edits[pageNo].push_back(prepareEdit(original, pageNo, op, candidate, pages.at(pageNo)));
     }
+    timings.finish("prepare");
     std::map<int, std::string> expectedContents;
     for (auto& [pageNo, list] : edits) {
         auto content = original.load(pageNo).mapping->content;
@@ -667,19 +741,22 @@ J applyEdits(Document& original, const J& request) {
         pages.at(pageNo).getObjectHandle().replaceKey("/Contents", candidate.newStream(content));
         expectedContents[pageNo] = std::move(content);
     }
+    timings.finish("patch");
     auto beforeHashes = streamHashes(original.qpdf);
+    timings.finish("sourceStreams");
     auto output = request.at("output").get<std::string>(); save(candidate, output, true);
+    timings.finish("save");
     Document check(output);
+    timings.finish("reopen");
     require(check.pages.size() == original.pages.size(), "VERIFY_FAILED", "Page count changed");
     auto afterHashes = streamHashes(check.qpdf);
     require(std::includes(afterHashes.begin(), afterHashes.end(), beforeHashes.begin(), beforeHashes.end()), "VERIFY_FAILED", "An original content/resource stream changed");
     if (request.contains("textBounds")) {
         J issues = J::array();
         for (const auto& constraint : textBounds) {
-            const auto& after = objects(check, constraint.page);
-            auto found = std::find_if(after.begin(), after.end(), [&](const J& item) { return item.at("id") == constraint.target; });
+            const auto* found = findObject(check, constraint.page, constraint.target);
             J issue = {{"page", constraint.page}, {"target", constraint.target}, {"withinRectPt", constraint.region.json()}};
-            if (found == after.end() || !found->contains("boundsPt")) {
+            if (!found || !found->contains("boundsPt")) {
                 issue["code"] = "MISSING_BOUNDS"; issue["boundsPt"] = nullptr; issues.push_back(issue); continue;
             }
             issue["boundsPt"] = found->at("boundsPt");
@@ -745,12 +822,16 @@ J applyEdits(Document& original, const J& request) {
             if (e.contains("textSource")) saved["textSource"] = e["textSource"];
             changes.push_back({{"target", id}, {"page", pageNo}, {"before", before[i]}, {"after", saved}}); changed.emplace_back(before[i],after[i]);
         }
+        timings.finish("verifyObjects");
         gates.push_back(pixelGate(original, check, pageNo, changed));
+        timings.finish("verifyPixels");
     }
     // Untouched pages must keep their decoded contents, including shared streams.
     for (size_t i = 0; i < pages.size(); ++i) if (!edits.contains(static_cast<int>(i))) require(pageContent(original.pages[i]) == pageContent(check.pages[i]), "VERIFY_FAILED", "Untouched page content changed");
     require(!check.qpdf.anyWarnings(), "VERIFY_FAILED", "Saved PDF has parse warnings");
+    timings.finish("verifyObjects");
     J result = {{"changes", changes}, {"validation", {{"reopened", true}, {"originalRawStreamsPreserved", beforeHashes.size()}, {"patchedContentsVerified", true}, {"unchangedObjectsVerified", unchangedObjects}, {"whitespaceSourceChecks", whitespaceSourceChecks}, {"pixelGates", gates}, {"fontExpansions", fontExpansions}, {"fontReuses", fontReuses}, {"rasterized", false}}}};
+    result["timingsMs"] = timings.values;
     if (request.contains("textBounds")) {
         result["validation"]["textBounds"] = {{"checkedObjects", textBounds.size()}, {"tolerancePt", boundsTolerancePt}};
     }

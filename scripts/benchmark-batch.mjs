@@ -38,19 +38,20 @@ export async function runBatchBenchmark({ input, replacements, destination, page
     const complete = planTextReplacements(query, replacements);
     const counts = [...new Set([1, Math.ceil(replacements.length / 2), replacements.length])];
     const report = { version: label, input: path.resolve(input), page, sourceSha256: sourceHash, runs,
-      openMs, firstQueryMs, queryBytes: bytes(query),
+      openMs, firstQueryMs, firstQueryTimingsMs: query.timingsMs, queryBytes: bytes(query),
       protocol: {
         scope: 'Explicit whole-label replacements on one page; no automatic study detection.',
         timing: 'Each batch uses the same immutable source snapshot. One untimed apply warms each batch size; measured applies include save, reopen, integrity and pixel gates. Rendering and report I/O are outside apply timing.',
         cache: 'One session per version; OS cache is not flushed. First query includes mapping.',
         payload: 'JSON UTF-8 byte counts, not model token counts. Reasoning/network latency is excluded.',
+        phases: 'Native timingsMs are non-overlapping elapsed phases in ms, excluding JS source hashing, RPC serialization and publication. Mapping includes its probe render check. Omitted for older engines.',
       }, batches: [] };
     for (const count of counts) {
       const items = replacements.slice(0, count);
       const planningStart = performance.now();
       const plan = planTextReplacements(query, items);
       const planningMs = performance.now() - planningStart;
-      const samples = [], nativeSamples = [];
+      const samples = [], nativeSamples = [], phaseSamples = {};
       let example;
       for (let run = -1; run < runs; run++) {
         const name = `batch-${count}-${run < 0 ? 'warmup' : run + 1}`;
@@ -64,7 +65,10 @@ export async function runBatchBenchmark({ input, replacements, destination, page
         assert.ok(receipt.validation.pixelGates.every(gate => gate.changedPixelsOutside === 0));
         const actual = new Map(receipt.changes.map(change => [change.target, change.after.textSource]));
         for (const operation of plan.operations) assert.equal(actual.get(operation.target), operation.value);
-        if (run >= 0) { samples.push(elapsed); nativeSamples.push(receipt.engineMs); }
+        if (run >= 0) {
+          samples.push(elapsed); nativeSamples.push(receipt.engineMs);
+          for (const [phase, ms] of Object.entries(receipt.timingsMs ?? {})) (phaseSamples[phase] ??= []).push(ms);
+        }
         await writeFile(path.join(destination, `${name}.receipt.json`), json(receipt));
         if (run === 0) example = receipt;
       }
@@ -79,6 +83,7 @@ export async function runBatchBenchmark({ input, replacements, destination, page
         }
       } finally { await saved.close(); }
       report.batches.push({ count, planningMs, apply: statistics(samples), native: statistics(nativeSamples),
+        phases: Object.fromEntries(Object.entries(phaseSamples).map(([phase, samples]) => [phase, statistics(samples)])),
         replacementBytes: bytes(items), operationsBytes: bytes(plan.operations),
         fullReceiptBytes: bytes(example), summaryReceiptBytes: bytes(summarizeReceipt(example)),
         output: example.output, preview, validation: summarizeReceipt(example).validation });

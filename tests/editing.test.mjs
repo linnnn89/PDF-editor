@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 await mkdir(path.join(root, 'artifacts/tests'), { recursive: true });
 const work = await mkdtemp(path.join(root, 'artifacts/tests/edits-'));
 const closeEnough = (a, b) => assert.ok(Math.abs(a-b) < .0002, `${a} != ${b}`);
-const sourceObjects = info => info.objects.map(({ editable, sourceMapping, supportedOperations, editReason, textSource, reusableCharacters, sourceCommand, strokeWidthPt, ...rest }) => rest);
+const sourceObjects = info => info.objects.map(({ editable, sourceMapping, supportedOperations, editReason, editReasonCode, textSource, reusableCharacters, sourceCommand, strokeWidthPt, ...rest }) => rest);
 
 test('batch text/style edits preserve the following text cursor, rotated physical units and other pages sharing both streams', async () => {
   const file = path.join(work, 'shared-text-state.pdf');
