@@ -45,7 +45,7 @@ test('projected queries retain selection, edit preconditions and the complete in
 test('field selection validates its contract and works through the CLI without changing defaults', async () => {
   const editor = await openDocument(input);
   try {
-    for (const fields of ['text', null, ['unknown'], [4], Array(25).fill('text')]) {
+    for (const fields of ['text', null, ['unknown'], [4], Array(26).fill('text')]) {
       await assert.rejects(editor.query({ fields }), { code: 'INVALID_ARGUMENT' });
     }
     const missing = await editor.query({ type: 'image', fields: ['textSource'], mapping: false });

@@ -72,6 +72,8 @@ npm run skill:pack
 
 `setup` 将约 33 MB 的固定版本原生依赖下载到项目的 `vendor/`，校验 SHA-256，并创建被 Git 忽略的 `test pdf/` 目录。它不会安装系统工具或修改全局配置。`skill:pack` 按公开文件清单，将项目和已编译运行程序打包为一个新的完整 skill 目录，本身不下载依赖。详见[打包说明](skills/README.md)。
 
+当前源码构建新增 `node src/cli.mjs doctor --deep`，实际启动原生引擎检查版本及库加载，失败时退出码为 1。`skill:pack` 会校验成品文件清单，并搬迁到包含中文和空格的新目录执行检查、编辑、重开和渲染演示。验证结果保存在 `artifacts/package-checks/`，不写入待分发包。仓库的 Windows CI 使用同一套构建、测试和成品包验证命令。
+
 ### 使用自己的 PDF
 
 将文件放到 `test pdf/figure.pdf`，然后检查对象、生成预览：
@@ -149,6 +151,8 @@ try {
 
 ## 验证与使用边界
 
+源码构建支持 Type1/TrueType 简单字体的编码字典：WinAnsi、受支持的 StandardEncoding 子集，以及已确认字形名的 `Differences` 覆盖。数学减号 `−` 和连字符 `-` 保持区分。只读对象新增 `editReasonCode`，便于程序判断拒绝原因；详见[编码支持范围](docs/API.md#simple-font-encoding-dictionaries--简单字体编码字典)。
+
 写入使用新文件，拒绝过期输入和已存在的目标路径。对象编辑后会重新打开结果，核对请求的修改、原始内容流和未选中的对象，并由 PDFium 在 **144 dpi** 下比较图像：允许变化的目标区域及固定抗锯齿边缘之外，变化像素必须为零。
 
 这项检查用于验证修改范围，不能判断长标签是否遮住邻近内容，也不能代替排版审美。用于论文或演示之前，请检查预览。
@@ -174,6 +178,8 @@ npm run bench:batch -- --input "test pdf/figure.pdf" --replacements "test pdf/na
 ```
 
 测试会生成合成 PDF；字体补全测试使用本机已安装的 Arial 常规体和粗体，不随仓库分发字体文件。性能测试使用自己的本地样本，报告写入 `artifacts/`，测量本地处理耗时，不包含 agent 推理或模型调用延迟。
+
+源码构建的查询和对象编辑回执提供 `timingsMs`，区分索引、来源映射、保存、重开与核验等原生阶段；`bench:edits` 和 `bench:batch` 的 JSON 报告保留这些数据。阶段耗时不包含 JS 哈希、进程间序列化及最终文件发布，不能代替端到端耗时。详见 [API 说明](docs/API.md#native-phase-timings--原生分阶段耗时)。
 
 批量基准读取所选页面的明确对应表，例如由 `{ "from": "Author 2020", "to": "Author (2020)" }` 组成的 JSON 数组，比较单个、半列和整列替换，核对重开文字、非目标像素及原文件哈希。请求大小记录 UTF-8 字节数，不等同于模型 token。名称对应表请与私有 PDF 一起放在 `test pdf/`。
 

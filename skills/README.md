@@ -44,6 +44,16 @@ npm run skill:pack
 
 `setup` downloads pinned project-local build dependencies; `build` compiles the engine; `skill:pack` creates the complete skill directory and prints its location. Packaging itself downloads, installs and overwrites nothing. Use `npm run skill:pack -- --output <new-absolute-directory>/pdf-editor` to select a new destination.
 
+当前源码的 `skill:pack` 在输出成功前会校验成品清单中每个文件的大小及 SHA-256，将清单文件复制到包含中文和空格的新目录，再从搬迁后的包内运行 `doctor --deep` 与合成 PDF 演示。演示验证读取、编辑、重开、渲染、非目标像素及源文件哈希。验证目录和预览保留在 `artifacts/package-checks/`，不进入待分发包。失败时命令非零退出，保留现场用于诊断；不要分发未通过验证的目录。
+
+Source `skill:pack` verifies every manifest file's size and SHA-256 before reporting success, copies the manifest files to a new path with Unicode and spaces, then runs `doctor --deep` and the synthetic PDF demo from that relocated package. The demo checks reading, editing, reopening, rendering, non-target pixels and the original hash. Diagnostics and previews stay in `artifacts/package-checks/`, outside the distributable package. Failure exits nonzero and retains diagnostic files; do not distribute an unverified directory.
+
+对已有成品目录可单独运行 / To verify an existing package directory:
+
+```powershell
+npm run skill:verify -- --package "D:\packages\pdf-editor"
+```
+
 打包通过 `skills/project-files.json` 明确列出的公开文件、固定 EXE/DLL 清单及第三方许可文本复制，新增公开项目文件时需更新清单。源码 ZIP 无需 Git 也可打包。入口和参考手册放在包顶层，`project/` 内不再重复放置 `SKILL.md`，以免宿主重复发现。分发时压缩整个生成的 `pdf-editor/` 文件夹，并发布到 Release；不要提交编译文件到源码仓库。
 
 Packaging copies the public files in `skills/project-files.json`, a fixed EXE/DLL list and third-party notices. Update the manifest when public project files are added; packaging a source ZIP does not require Git. The skill entrypoint and references live at the package root, without a duplicate `SKILL.md` under `project/`. Distribute the whole generated folder as a Release ZIP; keep compiled files out of source control.

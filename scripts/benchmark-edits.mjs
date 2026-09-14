@@ -231,6 +231,7 @@ for (const [fileIndex, file] of files.entries()) {
       entry.rejection.push({ phase: 'scope', code: 'MULTI_PAGE_SKIPPED', message: `Expected a single-page Figure; found ${entry.pageCount} pages` });
     } else {
       const inspection = await timed(() => editor.inspect({ page: 0, limit: 10000 }), entry.samples.firstMapping);
+      entry.firstMappingTimingsMs = inspection.timingsMs;
       const objects = inspection.objects ?? [];
       const supportedCounts = Object.fromEntries(['text.replace', 'text.style', 'path.style'].map(operation => [
         operation, objects.filter(object => supports(object, operation)).length,
@@ -277,7 +278,7 @@ for (const [fileIndex, file] of files.entries()) {
             const elapsedMs = performance.now() - started;
             const validation = validateReceipt(receipt);
             edit.samples.push(elapsedMs);
-            const attempt = { run: run + 1, status: 'passed', elapsedMs, output, outputSha256: receipt.outputSha256, validation };
+            const attempt = { run: run + 1, status: 'passed', elapsedMs, timingsMs: receipt.timingsMs, output, outputSha256: receipt.outputSha256, validation };
             edit.attempts.push(attempt);
             if (!edit.example) {
               const preview = path.resolve(fileDir, `${definition.key}-example.png`);
@@ -301,6 +302,10 @@ for (const [fileIndex, file] of files.entries()) {
           }
         }
         edit.statistics = stats(edit.samples);
+        const phases = {};
+        for (const attempt of edit.attempts) for (const [phase, ms] of Object.entries(attempt.timingsMs ?? {}))
+          (phases[phase] ??= []).push(ms);
+        edit.phaseStatistics = Object.fromEntries(Object.entries(phases).map(([phase, samples]) => [phase, stats(samples)]));
         edit.status = edit.samples.length === runs ? 'passed' : edit.samples.length ? 'partial' : 'rejected';
       }
       entry.status = entry.rejection.length ? 'completed-with-rejections' : 'passed';

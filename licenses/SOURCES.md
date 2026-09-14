@@ -41,3 +41,13 @@ rights. No separate runtime license text was present in the qpdf archive.
 - https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files
 
 Node.js is an external prerequisite and is not included in the runtime package.
+
+`native/glyph_names.h` contains the 586 glyph-name/single-BMP mappings from
+Adobe AGLFN 1.7, under BSD-3-Clause; the full notice is retained in
+`adobe-aglfn-LICENSE.txt`. Names are matched exactly; this is not the complete
+Adobe Glyph List or the suffix/ligature/Unicode-name conversion algorithm.
+Retrieved on 2026-09-14 from the pinned source:
+
+- https://raw.githubusercontent.com/adobe-type-tools/agl-aglfn/4036a9ca80a62f64f9de4f7321a9a045ad0ecfd6/aglfn.txt
+- Source SHA256: `ed735a9ea58549b4cb2b8e804341548adb25aff43e81001ac7f3917247cacca1`
+- https://raw.githubusercontent.com/adobe-type-tools/agl-aglfn/4036a9ca80a62f64f9de4f7321a9a045ad0ecfd6/LICENSE.md

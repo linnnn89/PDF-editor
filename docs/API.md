@@ -43,6 +43,41 @@ try {
 
 `mapping: false`（CLI `--no-mapping`）跳过只读检查的来源映射，不放宽写入验证。`limit: 0` 能减少返回内容，但目前仍会建立底层页面索引。
 
+With mapping enabled, read-only objects expose `editReasonCode` alongside the
+human-readable `editReason`. Editable objects omit both. General codes include
+`SOURCE_MAPPING_UNAVAILABLE`, `SOURCE_MAPPING_FAILED`, `UNSUPPORTED_FONT`,
+`UNSUPPORTED_TEXT`, and `UNSUPPORTED_PATH`. This diagnostic does not replace
+the validation performed by `apply`.
+
+开启来源映射时，只读对象同时返回稳定的 `editReasonCode` 和可读说明 `editReason`；可编辑对象省略两者。诊断不代替 `apply` 的写入核验。可用 `--fields font,editable,editReasonCode,editReason` 查询并按字体归类原因。
+
+### Simple-font encoding dictionaries / 简单字体编码字典
+
+Type1/TrueType fonts without a ToUnicode stream can use a direct or indirect
+`/Encoding` dictionary. Supported bases are `/WinAnsiEncoding` and the printable
+32–126 subset of `/StandardEncoding`. An omitted base is accepted only for the
+twelve unembedded standard Latin Type1 fonts (Helvetica, Times and Courier
+variants). `Differences` overlays the base using exact names from the 586-entry
+Adobe AGLFN 1.7 table. `/minus` means U+2212 (`−`); `/hyphen` means U+002D (`-`).
+Use `textSource` for exact edit preconditions. A supported ToUnicode stream
+takes precedence.
+
+无 ToUnicode 流的 Type1/TrueType 字体现在支持直接或间接的 `/Encoding` 字典。基础编码支持 WinAnsi，以及 StandardEncoding 的 32–126 字符码子集；省略基础编码时，仅接受未嵌入的 Helvetica、Times、Courier 标准 Type1 字体及其粗体/斜体变体。`Differences` 按 Adobe AGLFN 1.7 的 586 个精确字形名覆盖基础映射，不猜测未知名称、名称后缀、组合字形或 Unicode 命名形式。数学减号 `−` 与连字符 `-` 分别保留。已有受支持的 ToUnicode 流优先，编辑前置条件应使用 `textSource`。
+
+| Code / 诊断码 | Meaning / 含义 |
+| --- | --- |
+| `FONT_ENCODING_UNSUPPORTED` | Unsupported base or unknown implicit encoding / 不支持的基础编码，或无法确定内置编码 |
+| `FONT_ENCODING_INVALID` | Invalid types, start codes, out-of-range or repeated assignments / 字典类型、起始码、越界或重复赋值有误 |
+| `FONT_GLYPH_UNMAPPED` | A used code names an unsupported glyph, including `.notdef` / 实际使用的字符码对应未知或未定义字形 |
+
+Unknown Differences names remove the corresponding base mapping and only block
+text using those codes; malformed dictionaries block the whole font. Ambiguous
+character reuse and noncanonical duplicate-code metrics still fail closed at
+edit time. Font resources and source streams are preserved. CID encoding,
+complex shaping, and additional text rendering modes are outside this feature.
+
+未知字形会移除对应字符码的基础映射，仅阻止使用该码的文字；结构无效的字典会阻止整套字体。字符复用或字宽仍有歧义时，写入继续拒绝。保存保留原始字体资源及内容流。
+
 For sizes/counts only, use `stats`; for target details, use `query`; after editing, use the receipt and request a preview when needed. Narrow queries reduce response size but may still build the full page index and source mapping on their first call.
 
 只需要尺寸及数量时用 `stats`，选定目标时用 `query`，修改后读取回执并按需渲染预览。缩小查询范围能减少返回内容，但首次查询仍可能建立完整页面索引和来源映射。
@@ -61,13 +96,13 @@ const labels = await editor.query({
 
 `fields` 是 `inspect` 和 `query` 的可选数组，仅选择返回的对象属性，始终附带 `id` 和 `type`。空数组只返回这两项，对象上不存在的属性会省略。页面及源文件信息、统计、匹配、顺序和分页保持一致；默认仍返回完整详情，不改变缓存索引或编辑验证。准备改字时应请求 `textSource` 和可编辑性证据。设置 `mapping: false` 时，来源映射字段仍可能不可用。该参数减少 JSON 和进程间传输量，不省去首次索引或映射工作，也不会将选出的文档文字脱敏。
 
-Allowed names (up to 24 per request) / 允许的字段名（每次最多 24 个）：
+Allowed names (up to 25 per request) / 允许的字段名（每次最多 25 个）：
 
 ```text
 id type depth matrix boundsPt boundsKind fill stroke text
 fontSizeRaw fontSizeYPt font fontEmbedded strokeWidthRaw strokeWidthPt
 segmentCount pixels sourceMapping editable supportedOperations
-editReason sourceCommand textSource reusableCharacters
+editReason editReasonCode sourceCommand textSource reusableCharacters
 ```
 
 CLI: `--fields textSource,editable,supportedOperations`. Unknown names, non-array API values, non-string entries and empty CLI names fail with `INVALID_ARGUMENT`. The CLI option applies only to `inspect`/`query`; `stats` retains its page-only contract.
@@ -284,6 +319,21 @@ Panels with annotations are rejected by default. Explicit `annotations: 'exclude
 - The same explicit `requestId` and apply plan in one session replay the verified receipt. Different plans with that ID are rejected. This is not persistent recovery. / 同一会话中，相同 `requestId` 和 apply 计划会重放核验过的回执；相同 ID 不同计划被拒绝，不提供跨进程持久恢复。
 - The second argument accepts `{ signal, timeoutMs }`. Cancellation before dispatch preserves the session; cancellation or timeout after dispatch terminates its worker. Reopen afterward. Always `await editor.close()`. / 第二个参数支持 `{ signal, timeoutMs }`。派发前取消保留会话，派发后取消或超时终止 worker，随后需要新会话。退出前始终 `await editor.close()`。
 
+## Native phase timings / 原生分阶段耗时
+
+Current source builds add `timingsMs` to successful `inspect`/`query` results and object-edit `apply` receipts. Values are non-overlapping elapsed milliseconds within that native request; repeated phases accumulate. They exclude JS source hashing, IPC serialization, final file publication and model latency, so their sum is not the end-to-end duration. Cached queries measure work actually performed in that request. Replayed receipts retain their original timings. Crop, composition and compact summaries do not include these phase fields.
+
+当前源码构建在成功的 `inspect`/`query` 结果和对象编辑 `apply` 回执中增加 `timingsMs`。各项为本次原生请求内互不重叠的实际毫秒耗时，重复进入同一阶段时累加。不包含 JS 源文件哈希、进程间序列化、最终文件发布及模型耗时，因此总和不等于端到端耗时。缓存查询记录本次实际工作；回执重放保留原始耗时。裁剪、拼版和简短摘要不包含这些阶段字段。
+
+| Request / 请求 | Phases / 阶段 |
+|---|---|
+| `inspect`, `query` | `objectIndex` (page/object index and ID lookup table), `sourceMapping` (source mapping including probe construction and its 96 dpi render check), `selection` (filtering and projection) |
+| Object-edit `apply` / 对象编辑 | `prepare` (plan/font preparation), `sourceMapping`, `patch`, `sourceStreams` (original raw-stream hashes), `save`, `reopen`, `verifyObjects` (saved streams, text bounds, objects and glyphs), `verifyPixels` (144 dpi target pixel gates) |
+
+`bench:edits` stores `firstMappingTimingsMs` and per-edit `phaseStatistics` in its JSON report. `bench:batch` stores `firstQueryTimingsMs` and per-batch `phases`, excluding its warmup apply from phase statistics. Existing total wall-clock measurements remain available; older engines provide no phase data.
+
+`bench:edits` 的 JSON 报告增加 `firstMappingTimingsMs` 和各类编辑的 `phaseStatistics`；`bench:batch` 增加 `firstQueryTimingsMs` 和各批次的 `phases`，阶段统计排除预热修改。原有总耗时测量继续保留；旧引擎不提供对应阶段数据。
+
 ## CLI and errors / 命令行与错误
 
 ```powershell
@@ -292,9 +342,9 @@ node src/cli.mjs apply "test pdf/figure.pdf" plan.json
 node src/cli.mjs compose composition.json
 ```
 
-Plans use the JS API's JSON fields, including absolute output paths. `doctor` checks runtime support and executable presence without starting a worker; the demo additionally exercises the loaded libraries.
+Plans use the JS API's JSON fields, including absolute output paths. `doctor` checks runtime support and executable presence without starting a worker. Current source builds also provide `doctor({ deep: true })` and `node src/cli.mjs doctor --deep`: these start a worker, verify its version/protocol handshake, then close it. The result includes `ready`, and either `engine` or `error`. `workerStarted` is true once the worker has answered the handshake, even if its version is incompatible. A failed deep CLI check emits the diagnostic result as JSON to stdout and exits with status 1. Worker startup has a 5-second request timeout. The demo additionally exercises PDF reading, editing and rendering.
 
-计划使用 JS API 的 JSON 字段，包括绝对输出路径。`doctor` 检查运行环境和可执行文件是否存在，不启动 worker；演示进一步验证相关库实际加载与工作。
+计划使用 JS API 的 JSON 字段，包括绝对输出路径。`doctor` 检查运行环境和可执行文件是否存在，不启动 worker。当前源码构建还支持 `doctor({ deep: true })` 和 `node src/cli.mjs doctor --deep`：启动 worker、核对版本和协议握手，然后关闭。结果包含 `ready`，以及 `engine` 或 `error`。worker 回答握手后 `workerStarted` 为 true，即使版本不匹配。CLI 深度检查失败时，诊断结果以 JSON 写入 stdout，退出码为 1；启动请求超时为 5 秒。演示进一步验证 PDF 的读取、编辑和渲染。
 
 | Error / 错误码 | Action / 处理方式 |
 |---|---|

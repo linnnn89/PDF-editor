@@ -26,12 +26,24 @@
 #include <set>
 #include <sstream>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 using J = nlohmann::json;
 using OH = QPDFObjectHandle;
 using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
+
+// Sequential, non-overlapping native phases; repeated phases accumulate.
+struct PhaseTimings {
+    std::chrono::steady_clock::time_point mark = std::chrono::steady_clock::now();
+    J values = J::object();
+    void finish(const char* name) {
+        auto now = std::chrono::steady_clock::now();
+        values[name] = values.value(name, 0.) + std::chrono::duration<double, std::milli>(now - mark).count();
+        mark = now;
+    }
+};
 
 struct Failure : std::runtime_error {
     std::string code;
@@ -147,6 +159,7 @@ struct LoadedPage {
     FPDF_PAGE page{};
     FPDF_TEXTPAGE text{};
     J objects;
+    std::unordered_map<std::string, size_t> objectIndices;
     std::shared_ptr<PageMapping> mapping;
     ~LoadedPage() { if (text) FPDFText_ClosePage(text); if (page) FPDF_ClosePage(page); }
 };
@@ -287,8 +300,17 @@ J& objects(Document& doc, int index) {
         J list = J::array();
         indexObjects(page, nullptr, {1,0,0,1,0,0}, geometry(doc.pages.at(index)), "p" + std::to_string(index), list, 0);
         page.objects = std::move(list);
+        page.objectIndices.reserve(page.objects.size());
+        for (size_t i = 0; i < page.objects.size(); ++i)
+            page.objectIndices.emplace(page.objects[i].at("id").get<std::string>(), i);
     }
     return page.objects;
+}
+const J* findObject(Document& doc, int index, const std::string& id) {
+    const auto& list = objects(doc, index);
+    const auto& indices = doc.load(index).objectIndices;
+    auto found = indices.find(id);
+    return found == indices.end() ? nullptr : &list.at(found->second);
 }
 void countObjects(LoadedPage& page, FPDF_PAGEOBJECT form, J& counts, size_t& total, int depth) {
     require(depth <= 32, "RESOURCE_LIMIT", "Form nesting exceeds 32 levels");
@@ -321,14 +343,15 @@ J stats(Document& doc, const J& request) {
 }
 void ensureMapping(Document& doc, int index);
 J inspect(Document& doc, const J& request) {
+    PhaseTimings timings;
     const bool project = request.contains("fields");
     std::set<std::string> projection = {"id", "type"};
     if (project) {
         static const std::set<std::string> allowed = {"id", "type", "depth", "matrix", "boundsPt", "boundsKind",
             "fill", "stroke", "text", "fontSizeRaw", "fontSizeYPt", "font", "fontEmbedded", "strokeWidthRaw",
             "strokeWidthPt", "segmentCount", "pixels", "sourceMapping", "editable", "supportedOperations",
-            "editReason", "sourceCommand", "textSource", "reusableCharacters"};
-        require(request["fields"].is_array() && request["fields"].size() <= allowed.size(), "INVALID_ARGUMENT", "fields must be an array of at most 24 object field names");
+            "editReason", "editReasonCode", "sourceCommand", "textSource", "reusableCharacters"};
+        require(request["fields"].is_array() && request["fields"].size() <= allowed.size(), "INVALID_ARGUMENT", "fields must be an array of at most 25 object field names");
         for (const auto& field : request["fields"]) {
             require(field.is_string() && allowed.contains(field.get<std::string>()), "INVALID_ARGUMENT", "Unknown or invalid object field");
             projection.insert(field.get<std::string>());
@@ -337,8 +360,10 @@ J inspect(Document& doc, const J& request) {
     int limit = request.contains("limit") ? integer(request["limit"], "limit", 10000) : 100;
     int offset = request.contains("offset") ? integer(request["offset"], "offset", 100000) : 0;
     int pageNo = request.contains("page") ? integer(request["page"], "page", 100000) : 0;
-    if (request.value("mapping", true)) ensureMapping(doc, pageNo);
     const auto& all = objects(doc, pageNo);
+    timings.finish("objectIndex");
+    if (request.value("mapping", true)) ensureMapping(doc, pageNo);
+    timings.finish("sourceMapping");
     auto g = geometry(doc.pages.at(pageNo));
     const bool regional = request.contains("withinRectPt");
     Rect region{};
@@ -379,7 +404,8 @@ J inspect(Document& doc, const J& request) {
         }
         ++matches;
     }
-    return {{"page", pageNo}, {"pageCount", doc.pages.size()}, {"widthPt", g.width}, {"heightPt", g.height},
+    timings.finish("selection");
+    return {{"timingsMs", timings.values}, {"page", pageNo}, {"pageCount", doc.pages.size()}, {"widthPt", g.width}, {"heightPt", g.height},
             {"rotation", g.rotation}, {"userUnit", g.unit}, {"coordinateSystem", "rotated-visible-page-top-left-pt"},
             {"pdfVersion", doc.qpdf.getPDFVersion()}, {"counts", counts}, {"matched", matches}, {"offset", offset},
             {"hasMore", matches > offset + static_cast<int>(selected.size())}, {"objects", selected}, {"warnings", doc.warnings()}};

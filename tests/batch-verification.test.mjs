@@ -9,7 +9,7 @@ import { fixture } from './fixtures.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
 await mkdir(path.join(root, 'artifacts/tests'), { recursive: true });
 const work = await mkdtemp(path.join(root, 'artifacts/tests/batch-verification-'));
-const sourceObjects = info => info.objects.map(({ editable, sourceMapping, supportedOperations, editReason, textSource, reusableCharacters, sourceCommand, strokeWidthPt, ...rest }) => rest);
+const sourceObjects = info => info.objects.map(({ editable, sourceMapping, supportedOperations, editReason, editReasonCode, textSource, reusableCharacters, sourceCommand, strokeWidthPt, ...rest }) => rest);
 
 test('batch glyph verification keeps each target distinct with real spaces and punctuation across reopened pages', async () => {
   const file = path.join(work, 'source.pdf');

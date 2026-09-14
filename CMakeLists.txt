@@ -11,6 +11,12 @@ if(NOT EXISTS "${QPDF_ROOT}/lib/qpdf.lib" OR NOT EXISTS "${PDFIUM_ROOT}/lib/pdfi
   message(FATAL_ERROR "Run npm run setup first")
 endif()
 add_executable(pdf-engine native/main.cpp)
+# Localized MSVC include output can lose dependency tracking in Ninja. Keep
+# the engine's project headers explicit so a header edit always rebuilds it.
+set_property(SOURCE native/main.cpp APPEND PROPERTY OBJECT_DEPENDS
+  "${CMAKE_SOURCE_DIR}/native/editing.h"
+  "${CMAKE_SOURCE_DIR}/native/font_extension.h"
+  "${CMAKE_SOURCE_DIR}/native/glyph_names.h")
 target_compile_features(pdf-engine PRIVATE cxx_std_20)
 target_compile_definitions(pdf-engine PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN APP_VERSION="${APP_VERSION}")
 target_compile_options(pdf-engine PRIVATE /W4 /EHsc /utf-8)
